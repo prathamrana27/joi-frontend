@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>JOI Desktop</title>
+    <link rel="icon" href="./assets/joi-logo-icon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+    <div id="appShell" class="app-shell">
+      <aside class="panel history-panel">
+        <div class="panel-header">
+          <div class="brand" aria-label="JOI">
+            <div class="brand-logo" role="img" aria-label="JOI Logo"></div>
+          </div>
+          <button id="newChatBtn" class="btn btn-primary">New Chat</button>
+        </div>
+        <div class="panel-subtitle">Conversation History</div>
+        <div id="historyList" class="history-list"></div>
+      </aside>
+
+      <main class="chat-stage">
+        <header class="chat-header">
+          <div class="chat-title-wrap">
+            <h1 class="chat-title">Desktop Assistant</h1>
+            <div class="meta-row">
+              <span id="connectionBadge" class="badge badge-offline">Disconnected</span>
+              <span id="buildTag" class="build-tag">v-</span>
+            </div>
+          </div>
+          <div class="chat-actions">
+            <label class="model-label" for="modelSelect">Model</label>
+            <select id="modelSelect" class="model-select">
+              <option value="openai">OpenAI</option>
+            </select>
+          </div>
+        </header>
+
+        <section id="chatMessages" class="chat-messages"></section>
+
+        <footer class="composer-wrap">
+          <div id="composerShell" class="composer">
+            <button id="attachBtn" class="icon-btn btn-plus" title="Add">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+            </button>
+
+            <div class="composer-main">
+              <textarea
+                id="promptInput"
+                rows="1"
+                placeholder="Ask anything"
+              ></textarea>
+
+              <div id="recordingShell" class="recording-shell" aria-hidden="true">
+                <div class="record-line"></div>
+                <div class="record-wave">
+                  <span></span><span></span><span></span><span></span><span></span>
+                  <span></span><span></span><span></span><span></span><span></span>
+                  <span></span><span></span>
+                </div>
+              </div>
+            </div>
+
+            <div id="composerActions" class="composer-actions">
+              <button id="micBtn" class="icon-btn icon-mic" title="Voice input">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10a7 7 0 0 1-14 0" />
+                  <path d="M12 17v4" />
+                  <path d="M8 21h8" />
+                </svg>
+              </button>
+
+              <button id="ttsToggleBtn" class="voice-orb" title="Toggle assistant voice">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 14v-4" />
+                  <path d="M9 17V7" />
+                  <path d="M13 12v-2" />
+                  <path d="M17 16V8" />
+                  <path d="M21 14v-4" />
+                </svg>
+              </button>
+
+              <button id="sendBtn" class="icon-btn icon-send" title="Send message">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 12h16" />
+                  <path d="m13 5 7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+
+            <div id="recordingActions" class="recording-actions">
+              <button id="recordingCancelBtn" class="icon-btn icon-cancel" title="Cancel recording">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m6 6 12 12" />
+                  <path d="M18 6 6 18" />
+                </svg>
+              </button>
+
+              <button id="recordingConfirmBtn" class="icon-btn icon-confirm" title="Transcribe recording">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m5 13 4 4L19 7" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="composer-note">Enter to send, Shift+Enter for newline</div>
+        </footer>
+      </main>
+
+      <aside id="workflowPanel" class="panel workflow-panel">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Workflow</div>
+            <div class="panel-subtitle">Tool calls and system events</div>
+          </div>
+          <div class="workflow-header-actions">
+            <button id="closeWorkflowBtn" class="btn btn-ghost">Close</button>
+            <button id="clearWorkflowBtn" class="btn btn-ghost">Clear</button>
+          </div>
+        </div>
+        <div id="workflowList" class="workflow-list"></div>
+      </aside>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
