@@ -16,6 +16,71 @@
   <body>
     <div class="bg-orb orb-a"></div>
     <div class="bg-orb orb-b"></div>
+    <div id="authScreen" class="auth-screen">
+      <div class="auth-glow auth-glow-a"></div>
+      <div class="auth-glow auth-glow-b"></div>
+      <section class="auth-card" aria-label="Authentication">
+        <div class="auth-brand">Welcome to JOI</div>
+        <h2 class="auth-title">Sign in to continue</h2>
+        <p class="auth-copy">Use Google or your email credentials. Your chats stay mapped to one account.</p>
+
+        <div class="auth-tabs" role="tablist" aria-label="Authentication tabs">
+          <button class="auth-tab active" type="button" data-auth-tab="signin" role="tab" aria-selected="true">
+            Sign In
+          </button>
+          <button class="auth-tab" type="button" data-auth-tab="signup" role="tab" aria-selected="false">
+            Sign Up
+          </button>
+        </div>
+
+        <div id="authSignInPanel" class="auth-panel active" role="tabpanel">
+          <form id="signInForm" class="auth-form">
+            <label class="auth-field">
+              <span>Email</span>
+              <input id="signInEmail" type="email" autocomplete="email" required />
+            </label>
+            <label class="auth-field">
+              <span>Password</span>
+              <input id="signInPassword" type="password" autocomplete="current-password" required />
+            </label>
+            <button class="auth-submit" type="submit">Sign In</button>
+          </form>
+        </div>
+
+        <div id="authSignUpPanel" class="auth-panel" role="tabpanel">
+          <form id="signUpForm" class="auth-form">
+            <div class="auth-grid-two">
+              <label class="auth-field">
+                <span>First name</span>
+                <input id="signUpFirstName" type="text" autocomplete="given-name" required />
+              </label>
+              <label class="auth-field">
+                <span>Last name</span>
+                <input id="signUpLastName" type="text" autocomplete="family-name" required />
+              </label>
+            </div>
+            <label class="auth-field">
+              <span>Email</span>
+              <input id="signUpEmail" type="email" autocomplete="email" required />
+            </label>
+            <label class="auth-field">
+              <span>Password</span>
+              <input id="signUpPassword" type="password" autocomplete="new-password" required />
+            </label>
+            <label class="auth-field">
+              <span>Confirm password</span>
+              <input id="signUpConfirmPassword" type="password" autocomplete="new-password" required />
+            </label>
+            <button class="auth-submit" type="submit">Create Account</button>
+          </form>
+        </div>
+
+        <div class="auth-divider"><span>or</span></div>
+        <div id="googleButtonWrap" class="google-button-wrap"></div>
+        <div id="authStatus" class="auth-status" aria-live="polite"></div>
+      </section>
+    </div>
+
     <div id="appShell" class="app-shell">
       <aside class="panel history-panel">
         <div class="panel-header">
@@ -42,6 +107,10 @@
             <select id="modelSelect" class="model-select">
               <option value="openai">OpenAI</option>
             </select>
+            <button id="memoryBtn" class="btn btn-ghost">Memory</button>
+            <button id="opsBtn" class="btn btn-ghost">Controls</button>
+            <div id="currentUserName" class="current-user-name">Not signed in</div>
+            <button id="logoutBtn" class="btn btn-ghost">Logout</button>
           </div>
         </header>
 
@@ -131,7 +200,140 @@
           </div>
         </div>
         <div id="workflowList" class="workflow-list"></div>
+        <div class="panel-subtitle">Pending Approvals</div>
+        <div id="approvalList" class="workflow-list"></div>
       </aside>
+    </div>
+
+    <div id="quickCommandOverlay" class="quick-command-overlay" aria-hidden="true">
+      <form id="quickCommandForm" class="quick-command-shell">
+        <input
+          id="quickCommandInput"
+          type="text"
+          placeholder="Quick command (Ctrl+Space)"
+          autocomplete="off"
+        />
+        <button id="quickCommandRunBtn" type="submit" class="btn btn-primary">Run</button>
+        <button id="quickCommandCloseBtn" type="button" class="btn btn-ghost">Close</button>
+      </form>
+    </div>
+
+    <div id="memoryModal" class="memory-modal" aria-hidden="true">
+      <div class="memory-card">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Personal Memory</div>
+            <div class="panel-subtitle">Used to personalize assistant behavior</div>
+          </div>
+          <button id="memoryCloseBtn" class="btn btn-ghost" type="button">Close</button>
+        </div>
+        <label class="memory-label" for="memoryPreferences">Preferences</label>
+        <textarea id="memoryPreferences" class="memory-textarea" rows="5"></textarea>
+        <label class="memory-label" for="memoryNotes">Notes</label>
+        <textarea id="memoryNotes" class="memory-textarea" rows="7"></textarea>
+        <div class="memory-actions">
+          <button id="memoryClearBtn" class="btn btn-ghost" type="button">Clear</button>
+          <button id="memorySaveBtn" class="btn btn-primary" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="opsModal" class="ops-modal" aria-hidden="true">
+      <div class="ops-card">
+        <div class="panel-header">
+          <div>
+            <div class="panel-title">Assistant Controls</div>
+            <div class="panel-subtitle">Manage permissions, automations, reminders, jobs, RAG and audit logs</div>
+          </div>
+          <div class="workflow-header-actions">
+            <button id="opsRefreshBtn" class="btn btn-ghost" type="button">Refresh</button>
+            <button id="opsCloseBtn" class="btn btn-ghost" type="button">Close</button>
+          </div>
+        </div>
+        <div id="opsStatus" class="ops-status" aria-live="polite"></div>
+
+        <div class="ops-grid">
+          <section class="ops-section">
+            <h3 class="ops-section-title">Permissions</h3>
+            <div class="ops-row">
+              <input id="permToolName" class="ops-input" type="text" placeholder="tool name (e.g. file_system)" />
+              <select id="permMode" class="ops-input">
+                <option value="allow">allow</option>
+                <option value="require_approval">require_approval</option>
+                <option value="deny">deny</option>
+              </select>
+              <button id="permSaveBtn" class="btn btn-primary" type="button">Save Rule</button>
+            </div>
+            <div id="permList" class="ops-list"></div>
+          </section>
+
+          <section class="ops-section">
+            <h3 class="ops-section-title">RAG Knowledge</h3>
+            <div class="ops-row">
+              <input id="ragPathInput" class="ops-input" type="text" placeholder="Root path inside your user directory" />
+              <input id="ragMaxFilesInput" class="ops-input ops-input-sm" type="number" min="1" max="1000" value="100" />
+              <button id="ragIndexBtn" class="btn btn-primary" type="button">Index</button>
+            </div>
+            <div class="ops-row">
+              <input id="ragQueryInput" class="ops-input" type="text" placeholder="Ask from indexed files" />
+              <input id="ragTopKInput" class="ops-input ops-input-sm" type="number" min="1" max="15" value="5" />
+              <button id="ragQueryBtn" class="btn btn-ghost" type="button">Search</button>
+            </div>
+            <div id="ragResults" class="ops-list"></div>
+          </section>
+
+          <section class="ops-section">
+            <h3 class="ops-section-title">Routines</h3>
+            <div class="ops-stack">
+              <input id="routineNameInput" class="ops-input" type="text" placeholder="Routine name" />
+              <textarea id="routinePromptInput" class="ops-textarea" rows="3" placeholder="Prompt to run"></textarea>
+              <div class="ops-row">
+                <input id="routineIntervalInput" class="ops-input ops-input-sm" type="number" min="5" max="10080" value="60" />
+                <label class="ops-check">
+                  <input id="routineEnabledInput" type="checkbox" checked />
+                  <span>Enabled</span>
+                </label>
+                <button id="routineCreateBtn" class="btn btn-primary" type="button">Create</button>
+              </div>
+            </div>
+            <div id="routineList" class="ops-list"></div>
+          </section>
+
+          <section class="ops-section">
+            <h3 class="ops-section-title">Reminders</h3>
+            <div class="ops-stack">
+              <input id="reminderTitleInput" class="ops-input" type="text" placeholder="Reminder title" />
+              <textarea id="reminderMessageInput" class="ops-textarea" rows="2" placeholder="Reminder message (optional)"></textarea>
+              <div class="ops-row">
+                <input id="reminderDueInput" class="ops-input" type="datetime-local" />
+                <button id="reminderCreateBtn" class="btn btn-primary" type="button">Create</button>
+              </div>
+            </div>
+            <div id="reminderList" class="ops-list"></div>
+          </section>
+
+          <section class="ops-section">
+            <h3 class="ops-section-title">Jobs</h3>
+            <div class="ops-stack">
+              <input id="jobTypeInput" class="ops-input" type="text" placeholder="job type (e.g. custom_task)" />
+              <textarea id="jobPayloadInput" class="ops-textarea" rows="3" placeholder='Payload JSON, e.g. {"task":"daily summary"}'></textarea>
+              <div class="ops-row">
+                <input id="jobRunAtInput" class="ops-input" type="datetime-local" />
+                <button id="jobCreateBtn" class="btn btn-primary" type="button">Queue Job</button>
+              </div>
+            </div>
+            <div id="jobList" class="ops-list"></div>
+          </section>
+
+          <section class="ops-section ops-section-wide">
+            <div class="panel-header">
+              <h3 class="ops-section-title">Audit Logs</h3>
+              <button id="auditRefreshBtn" class="btn btn-ghost" type="button">Reload</button>
+            </div>
+            <div id="auditList" class="ops-list"></div>
+          </section>
+        </div>
+      </div>
     </div>
 
     <script src="./app.js"></script>

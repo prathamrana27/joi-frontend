@@ -1,7 +1,73 @@
-const STORAGE_KEY = "joi_desktop_state_v1";
+const STORAGE_KEY_PREFIX = "joi_desktop_state_v1";
+const LEGACY_STORAGE_KEY = "joi_desktop_state_v1";
+const AUTH_STORAGE_KEY = "joi_auth_state_v1";
 const BACKEND_BASE_URL = "http://localhost:8000";
 
 const elements = {
+  authScreen: document.getElementById("authScreen"),
+  authTabs: document.querySelectorAll("[data-auth-tab]"),
+  authSignInPanel: document.getElementById("authSignInPanel"),
+  authSignUpPanel: document.getElementById("authSignUpPanel"),
+  authStatus: document.getElementById("authStatus"),
+  signInForm: document.getElementById("signInForm"),
+  signUpForm: document.getElementById("signUpForm"),
+  signInEmail: document.getElementById("signInEmail"),
+  signInPassword: document.getElementById("signInPassword"),
+  signUpFirstName: document.getElementById("signUpFirstName"),
+  signUpLastName: document.getElementById("signUpLastName"),
+  signUpEmail: document.getElementById("signUpEmail"),
+  signUpPassword: document.getElementById("signUpPassword"),
+  signUpConfirmPassword: document.getElementById("signUpConfirmPassword"),
+  googleButtonWrap: document.getElementById("googleButtonWrap"),
+  currentUserName: document.getElementById("currentUserName"),
+  logoutBtn: document.getElementById("logoutBtn"),
+  memoryBtn: document.getElementById("memoryBtn"),
+  opsBtn: document.getElementById("opsBtn"),
+  memoryModal: document.getElementById("memoryModal"),
+  memoryCloseBtn: document.getElementById("memoryCloseBtn"),
+  memorySaveBtn: document.getElementById("memorySaveBtn"),
+  memoryClearBtn: document.getElementById("memoryClearBtn"),
+  memoryPreferences: document.getElementById("memoryPreferences"),
+  memoryNotes: document.getElementById("memoryNotes"),
+  opsModal: document.getElementById("opsModal"),
+  opsCloseBtn: document.getElementById("opsCloseBtn"),
+  opsRefreshBtn: document.getElementById("opsRefreshBtn"),
+  opsStatus: document.getElementById("opsStatus"),
+  permToolName: document.getElementById("permToolName"),
+  permMode: document.getElementById("permMode"),
+  permSaveBtn: document.getElementById("permSaveBtn"),
+  permList: document.getElementById("permList"),
+  ragPathInput: document.getElementById("ragPathInput"),
+  ragMaxFilesInput: document.getElementById("ragMaxFilesInput"),
+  ragIndexBtn: document.getElementById("ragIndexBtn"),
+  ragQueryInput: document.getElementById("ragQueryInput"),
+  ragTopKInput: document.getElementById("ragTopKInput"),
+  ragQueryBtn: document.getElementById("ragQueryBtn"),
+  ragResults: document.getElementById("ragResults"),
+  routineNameInput: document.getElementById("routineNameInput"),
+  routinePromptInput: document.getElementById("routinePromptInput"),
+  routineIntervalInput: document.getElementById("routineIntervalInput"),
+  routineEnabledInput: document.getElementById("routineEnabledInput"),
+  routineCreateBtn: document.getElementById("routineCreateBtn"),
+  routineList: document.getElementById("routineList"),
+  reminderTitleInput: document.getElementById("reminderTitleInput"),
+  reminderMessageInput: document.getElementById("reminderMessageInput"),
+  reminderDueInput: document.getElementById("reminderDueInput"),
+  reminderCreateBtn: document.getElementById("reminderCreateBtn"),
+  reminderList: document.getElementById("reminderList"),
+  jobTypeInput: document.getElementById("jobTypeInput"),
+  jobPayloadInput: document.getElementById("jobPayloadInput"),
+  jobRunAtInput: document.getElementById("jobRunAtInput"),
+  jobCreateBtn: document.getElementById("jobCreateBtn"),
+  jobList: document.getElementById("jobList"),
+  auditRefreshBtn: document.getElementById("auditRefreshBtn"),
+  auditList: document.getElementById("auditList"),
+  approvalList: document.getElementById("approvalList"),
+  quickCommandOverlay: document.getElementById("quickCommandOverlay"),
+  quickCommandForm: document.getElementById("quickCommandForm"),
+  quickCommandInput: document.getElementById("quickCommandInput"),
+  quickCommandRunBtn: document.getElementById("quickCommandRunBtn"),
+  quickCommandCloseBtn: document.getElementById("quickCommandCloseBtn"),
   appShell: document.getElementById("appShell"),
   workflowPanel: document.getElementById("workflowPanel"),
   historyList: document.getElementById("historyList"),
@@ -46,7 +112,28 @@ const state = {
   audioChunks: [],
   streamTextQueue: [],
   streamTimer: null,
-  streamDonePending: false
+  streamDonePending: false,
+  auth: {
+    accessToken: "",
+    user: null,
+    googleClientId: ""
+  },
+  approvals: [],
+  memory: {
+    preferences: "",
+    notes: ""
+  },
+  ops: {
+    permissions: {},
+    routines: [],
+    reminders: [],
+    jobs: [],
+    auditLogs: [],
+    ragResults: []
+  },
+  notificationCursor: null,
+  desktopEventUnsubscribe: null,
+  notificationTimer: null
 };
 
 function uid(prefix = "id") {
@@ -55,6 +142,1008 @@ function uid(prefix = "id") {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function getConversationStorageKey() {
+  const userId = String(state.auth?.user?.id || "").trim();
+  return userId ? `${STORAGE_KEY_PREFIX}_${userId}` : LEGACY_STORAGE_KEY;
+}
+
+function getAuthDisplayName(user) {
+  if (!user || typeof user !== "object") {
+    return "Signed in";
+  }
+  const first = String(user.first_name || "").trim();
+  const last = String(user.last_name || "").trim();
+  const display = `${first} ${last}`.trim();
+  if (display) {
+    return display;
+  }
+  return String(user.email || "Signed in").trim() || "Signed in";
+}
+
+async function parseErrorResponse(response, fallbackMessage) {
+  let message = fallbackMessage;
+  try {
+    const payload = await response.json();
+    if (payload?.detail) {
+      message = String(payload.detail);
+    }
+  } catch (_err) {
+    // noop
+  }
+  return message;
+}
+
+async function authorizedFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (state.auth.accessToken) {
+    headers.set("Authorization", `Bearer ${state.auth.accessToken}`);
+  }
+  const response = await fetch(url, { ...options, headers });
+  if (response.status === 401 && state.auth.accessToken) {
+    clearAuthSession();
+    updateAuthUI();
+    setAuthStatus("Your session expired. Please sign in again.", "error");
+  }
+  return response;
+}
+
+async function getActiveAppContext() {
+  if (!window.joiDesktop?.getActiveAppContext) {
+    return { app: "", title: "", pid: 0 };
+  }
+  try {
+    const ctx = await window.joiDesktop.getActiveAppContext();
+    return {
+      app: String(ctx?.app || ""),
+      title: String(ctx?.title || ""),
+      pid: Number(ctx?.pid || 0)
+    };
+  } catch (_err) {
+    return { app: "", title: "", pid: 0 };
+  }
+}
+
+function openQuickCommandOverlay() {
+  if (!elements.quickCommandOverlay) {
+    return;
+  }
+  elements.quickCommandOverlay.classList.add("open");
+  elements.quickCommandOverlay.setAttribute("aria-hidden", "false");
+  if (elements.quickCommandInput) {
+    elements.quickCommandInput.focus();
+    elements.quickCommandInput.select();
+  }
+}
+
+function closeQuickCommandOverlay() {
+  if (!elements.quickCommandOverlay) {
+    return;
+  }
+  elements.quickCommandOverlay.classList.remove("open");
+  elements.quickCommandOverlay.setAttribute("aria-hidden", "true");
+}
+
+function upsertDraftFromQuickCommand(command) {
+  const text = String(command || "").trim();
+  if (!text) {
+    return;
+  }
+  elements.promptInput.value = text;
+  autoResizeInput();
+  updateBusyState();
+}
+
+async function handleQuickCommandSubmit(event) {
+  event.preventDefault();
+  const text = String(elements.quickCommandInput?.value || "").trim();
+  if (!text) {
+    return;
+  }
+  upsertDraftFromQuickCommand(text);
+  elements.quickCommandInput.value = "";
+  closeQuickCommandOverlay();
+  await sendMessage();
+}
+
+async function fetchMemory() {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/memory`);
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Memory fetch failed (${response.status})`));
+  }
+  const payload = await response.json();
+  state.memory.preferences = String(payload?.memory?.preferences || "");
+  state.memory.notes = String(payload?.memory?.notes || "");
+}
+
+function openMemoryModal() {
+  if (!elements.memoryModal) {
+    return;
+  }
+  elements.memoryPreferences.value = state.memory.preferences || "";
+  elements.memoryNotes.value = state.memory.notes || "";
+  elements.memoryModal.classList.add("open");
+  elements.memoryModal.setAttribute("aria-hidden", "false");
+}
+
+function closeMemoryModal() {
+  if (!elements.memoryModal) {
+    return;
+  }
+  elements.memoryModal.classList.remove("open");
+  elements.memoryModal.setAttribute("aria-hidden", "true");
+}
+
+async function saveMemory() {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/memory`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      preferences: String(elements.memoryPreferences?.value || ""),
+      notes: String(elements.memoryNotes?.value || "")
+    })
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Memory save failed (${response.status})`));
+  }
+  const payload = await response.json();
+  state.memory.preferences = String(payload?.memory?.preferences || "");
+  state.memory.notes = String(payload?.memory?.notes || "");
+}
+
+async function clearMemory() {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/memory`, { method: "DELETE" });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Memory clear failed (${response.status})`));
+  }
+  state.memory.preferences = "";
+  state.memory.notes = "";
+  if (elements.memoryPreferences) {
+    elements.memoryPreferences.value = "";
+  }
+  if (elements.memoryNotes) {
+    elements.memoryNotes.value = "";
+  }
+}
+
+function setOpsStatus(message, tone = "neutral") {
+  if (!elements.opsStatus) {
+    return;
+  }
+  elements.opsStatus.textContent = String(message || "");
+  elements.opsStatus.classList.remove("is-error", "is-success");
+  if (tone === "error") {
+    elements.opsStatus.classList.add("is-error");
+  } else if (tone === "success") {
+    elements.opsStatus.classList.add("is-success");
+  }
+}
+
+function openOpsModal() {
+  if (!elements.opsModal) {
+    return;
+  }
+  elements.opsModal.classList.add("open");
+  elements.opsModal.setAttribute("aria-hidden", "false");
+  void refreshOpsData({ showProgress: true, successMessage: "Controls loaded." });
+}
+
+function closeOpsModal() {
+  if (!elements.opsModal) {
+    return;
+  }
+  elements.opsModal.classList.remove("open");
+  elements.opsModal.setAttribute("aria-hidden", "true");
+}
+
+function toIsoOrEmpty(localDateTimeValue) {
+  const raw = String(localDateTimeValue || "").trim();
+  if (!raw) {
+    return "";
+  }
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("Invalid date/time value.");
+  }
+  return parsed.toISOString();
+}
+
+function parseObjectJson(text) {
+  const source = String(text || "").trim();
+  if (!source) {
+    return {};
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(source);
+  } catch (_err) {
+    throw new Error("Payload must be valid JSON.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Payload must be a JSON object.");
+  }
+  return parsed;
+}
+
+async function fetchPermissions() {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/permissions`);
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Permissions fetch failed (${response.status})`));
+  }
+  const payload = await response.json();
+  const rawRules = payload?.rules && typeof payload.rules === "object" ? payload.rules : {};
+  state.ops.permissions = {};
+  for (const [toolName, mode] of Object.entries(rawRules)) {
+    const tool = String(toolName || "").trim();
+    const normalizedMode = String(mode || "").trim();
+    if (!tool) {
+      continue;
+    }
+    if (normalizedMode === "allow" || normalizedMode === "deny" || normalizedMode === "require_approval") {
+      state.ops.permissions[tool] = normalizedMode;
+    }
+  }
+}
+
+async function savePermissionRule(toolName, mode) {
+  const tool = String(toolName || "").trim();
+  const normalizedMode = String(mode || "").trim();
+  if (!tool) {
+    throw new Error("Tool name is required.");
+  }
+  if (!["allow", "deny", "require_approval"].includes(normalizedMode)) {
+    throw new Error("Permission mode is invalid.");
+  }
+
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/permissions`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tool_name: tool, mode: normalizedMode })
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Permission save failed (${response.status})`));
+  }
+
+  const payload = await response.json();
+  const rawRules = payload?.rules && typeof payload.rules === "object" ? payload.rules : {};
+  state.ops.permissions = {};
+  for (const [ruleTool, ruleMode] of Object.entries(rawRules)) {
+    const safeTool = String(ruleTool || "").trim();
+    const safeMode = String(ruleMode || "").trim();
+    if (safeTool && (safeMode === "allow" || safeMode === "deny" || safeMode === "require_approval")) {
+      state.ops.permissions[safeTool] = safeMode;
+    }
+  }
+}
+
+async function fetchRoutines() {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/routines`);
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Routines fetch failed (${response.status})`));
+  }
+  const payload = await response.json();
+  state.ops.routines = Array.isArray(payload?.routines) ? payload.routines : [];
+}
+
+async function createRoutine() {
+  const name = String(elements.routineNameInput?.value || "").trim();
+  const prompt = String(elements.routinePromptInput?.value || "").trim();
+  const intervalMinutes = Number.parseInt(String(elements.routineIntervalInput?.value || "60"), 10);
+  const enabled = Boolean(elements.routineEnabledInput?.checked);
+  if (!name || !prompt) {
+    throw new Error("Routine name and prompt are required.");
+  }
+  if (!Number.isFinite(intervalMinutes) || intervalMinutes < 5 || intervalMinutes > 10080) {
+    throw new Error("Interval must be between 5 and 10080 minutes.");
+  }
+
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/routines`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name,
+      prompt,
+      interval_minutes: intervalMinutes,
+      enabled
+    })
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Routine create failed (${response.status})`));
+  }
+}
+
+async function updateRoutine(routineId, patchPayload) {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/routines/${encodeURIComponent(routineId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patchPayload || {})
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Routine update failed (${response.status})`));
+  }
+}
+
+async function deleteRoutine(routineId) {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/routines/${encodeURIComponent(routineId)}`, {
+    method: "DELETE"
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Routine delete failed (${response.status})`));
+  }
+}
+
+async function runRoutineNow(routineId) {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/routines/${encodeURIComponent(routineId)}/run`, {
+    method: "POST"
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Routine run failed (${response.status})`));
+  }
+}
+
+async function fetchReminders() {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/reminders`);
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Reminders fetch failed (${response.status})`));
+  }
+  const payload = await response.json();
+  state.ops.reminders = Array.isArray(payload?.reminders) ? payload.reminders : [];
+}
+
+async function createReminder() {
+  const title = String(elements.reminderTitleInput?.value || "").trim();
+  const message = String(elements.reminderMessageInput?.value || "").trim();
+  const dueAt = toIsoOrEmpty(elements.reminderDueInput?.value || "");
+  if (!title || !dueAt) {
+    throw new Error("Reminder title and due date/time are required.");
+  }
+
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/reminders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, message, due_at: dueAt })
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Reminder create failed (${response.status})`));
+  }
+}
+
+async function updateReminder(reminderId, patchPayload) {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/reminders/${encodeURIComponent(reminderId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patchPayload || {})
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Reminder update failed (${response.status})`));
+  }
+}
+
+async function deleteReminder(reminderId) {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/reminders/${encodeURIComponent(reminderId)}`, {
+    method: "DELETE"
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Reminder delete failed (${response.status})`));
+  }
+}
+
+async function fetchJobs() {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/jobs`);
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Jobs fetch failed (${response.status})`));
+  }
+  const payload = await response.json();
+  state.ops.jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+}
+
+async function createJob() {
+  const jobType = String(elements.jobTypeInput?.value || "").trim();
+  const payloadObj = parseObjectJson(elements.jobPayloadInput?.value || "");
+  const runAtRaw = String(elements.jobRunAtInput?.value || "").trim();
+  const runAt = runAtRaw ? toIsoOrEmpty(runAtRaw) : "";
+  if (!jobType) {
+    throw new Error("Job type is required.");
+  }
+
+  const body = { job_type: jobType, payload: payloadObj };
+  if (runAt) {
+    body.run_at = runAt;
+  }
+
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Job queue failed (${response.status})`));
+  }
+}
+
+async function fetchAuditLogs() {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/audit`);
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Audit fetch failed (${response.status})`));
+  }
+  const payload = await response.json();
+  state.ops.auditLogs = Array.isArray(payload?.logs) ? payload.logs : [];
+}
+
+async function runRagIndex() {
+  const rootPath = String(elements.ragPathInput?.value || "").trim();
+  const maxFiles = Number.parseInt(String(elements.ragMaxFilesInput?.value || "100"), 10);
+  if (!rootPath) {
+    throw new Error("RAG root path is required.");
+  }
+  if (!Number.isFinite(maxFiles) || maxFiles < 1 || maxFiles > 1000) {
+    throw new Error("max_files must be between 1 and 1000.");
+  }
+
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/rag/index`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ root_path: rootPath, max_files: maxFiles })
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `RAG index failed (${response.status})`));
+  }
+  const payload = await response.json();
+  return payload;
+}
+
+async function runRagQuery() {
+  const query = String(elements.ragQueryInput?.value || "").trim();
+  const topK = Number.parseInt(String(elements.ragTopKInput?.value || "5"), 10);
+  if (!query) {
+    throw new Error("RAG query text is required.");
+  }
+  if (!Number.isFinite(topK) || topK < 1 || topK > 15) {
+    throw new Error("top_k must be between 1 and 15.");
+  }
+
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/rag/query`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, top_k: topK })
+  });
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `RAG query failed (${response.status})`));
+  }
+  const payload = await response.json();
+  state.ops.ragResults = Array.isArray(payload?.results) ? payload.results : [];
+}
+
+function fillEmptyOpsList(container, message) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+  const empty = document.createElement("div");
+  empty.className = "empty-state";
+  empty.textContent = message;
+  container.appendChild(empty);
+}
+
+function renderPermissionsList() {
+  if (!elements.permList) {
+    return;
+  }
+  const entries = Object.entries(state.ops.permissions || {}).sort((a, b) => a[0].localeCompare(b[0]));
+  if (!entries.length) {
+    fillEmptyOpsList(elements.permList, "No permission rules yet.");
+    return;
+  }
+
+  elements.permList.innerHTML = "";
+  for (const [toolName, mode] of entries) {
+    const item = document.createElement("div");
+    item.className = "ops-item";
+
+    const title = document.createElement("div");
+    title.className = "ops-item-title";
+    title.textContent = toolName;
+
+    const meta = document.createElement("div");
+    meta.className = "ops-item-meta";
+    meta.textContent = `mode: ${mode}`;
+
+    const actions = document.createElement("div");
+    actions.className = "ops-item-actions";
+
+    ["allow", "require_approval", "deny"].forEach((rule) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `btn ${rule === mode ? "btn-primary" : "btn-ghost"}`;
+      btn.textContent = rule;
+      btn.addEventListener("click", async () => {
+        try {
+          await savePermissionRule(toolName, rule);
+          renderPermissionsList();
+          setOpsStatus(`Updated ${toolName} -> ${rule}`, "success");
+        } catch (err) {
+          setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+        }
+      });
+      actions.appendChild(btn);
+    });
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    item.appendChild(actions);
+    elements.permList.appendChild(item);
+  }
+}
+
+function renderRoutinesList() {
+  if (!elements.routineList) {
+    return;
+  }
+  const rows = Array.isArray(state.ops.routines) ? state.ops.routines : [];
+  if (!rows.length) {
+    fillEmptyOpsList(elements.routineList, "No routines created.");
+    return;
+  }
+
+  elements.routineList.innerHTML = "";
+  for (const routine of rows) {
+    const routineId = String(routine?.id || "");
+    const item = document.createElement("div");
+    item.className = "ops-item";
+
+    const title = document.createElement("div");
+    title.className = "ops-item-title";
+    title.textContent = String(routine?.name || "Routine");
+
+    const meta = document.createElement("div");
+    meta.className = "ops-item-meta";
+    meta.textContent = [
+      `interval=${Number(routine?.interval_minutes || 0)}m`,
+      `enabled=${routine?.enabled ? "yes" : "no"}`,
+      `next=${routine?.next_run_at ? formatDateTime(routine.next_run_at) : "-"}`
+    ].join(" | ");
+
+    const code = document.createElement("div");
+    code.className = "ops-code";
+    code.textContent = String(routine?.prompt || "");
+
+    const actions = document.createElement("div");
+    actions.className = "ops-item-actions";
+
+    const runBtn = document.createElement("button");
+    runBtn.type = "button";
+    runBtn.className = "btn btn-primary";
+    runBtn.textContent = "Run now";
+    runBtn.addEventListener("click", async () => {
+      try {
+        await runRoutineNow(routineId);
+        await refreshOpsData({ successMessage: "Routine queued." });
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+
+    const toggleBtn = document.createElement("button");
+    toggleBtn.type = "button";
+    toggleBtn.className = "btn btn-ghost";
+    toggleBtn.textContent = routine?.enabled ? "Disable" : "Enable";
+    toggleBtn.addEventListener("click", async () => {
+      try {
+        await updateRoutine(routineId, { enabled: !routine?.enabled });
+        await refreshOpsData({ successMessage: "Routine updated." });
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "btn btn-ghost";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", async () => {
+      try {
+        await deleteRoutine(routineId);
+        await refreshOpsData({ successMessage: "Routine deleted." });
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+
+    actions.appendChild(runBtn);
+    actions.appendChild(toggleBtn);
+    actions.appendChild(deleteBtn);
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    item.appendChild(code);
+    item.appendChild(actions);
+    elements.routineList.appendChild(item);
+  }
+}
+
+function renderRemindersList() {
+  if (!elements.reminderList) {
+    return;
+  }
+  const rows = Array.isArray(state.ops.reminders) ? state.ops.reminders : [];
+  if (!rows.length) {
+    fillEmptyOpsList(elements.reminderList, "No reminders created.");
+    return;
+  }
+
+  elements.reminderList.innerHTML = "";
+  for (const reminder of rows) {
+    const reminderId = String(reminder?.id || "");
+    const status = String(reminder?.status || "pending");
+
+    const item = document.createElement("div");
+    item.className = "ops-item";
+
+    const title = document.createElement("div");
+    title.className = "ops-item-title";
+    title.textContent = String(reminder?.title || "Reminder");
+
+    const meta = document.createElement("div");
+    meta.className = "ops-item-meta";
+    meta.textContent = `status=${status} | due=${formatDateTime(String(reminder?.due_at || ""))}`;
+
+    const note = document.createElement("div");
+    note.className = "ops-code";
+    note.textContent = String(reminder?.message || "");
+
+    const actions = document.createElement("div");
+    actions.className = "ops-item-actions";
+
+    if (status === "pending") {
+      const doneBtn = document.createElement("button");
+      doneBtn.type = "button";
+      doneBtn.className = "btn btn-primary";
+      doneBtn.textContent = "Mark done";
+      doneBtn.addEventListener("click", async () => {
+        try {
+          await updateReminder(reminderId, { status: "done" });
+          await refreshOpsData({ successMessage: "Reminder updated." });
+        } catch (err) {
+          setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+        }
+      });
+      actions.appendChild(doneBtn);
+
+      const cancelBtn = document.createElement("button");
+      cancelBtn.type = "button";
+      cancelBtn.className = "btn btn-ghost";
+      cancelBtn.textContent = "Cancel";
+      cancelBtn.addEventListener("click", async () => {
+        try {
+          await updateReminder(reminderId, { status: "cancelled" });
+          await refreshOpsData({ successMessage: "Reminder cancelled." });
+        } catch (err) {
+          setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+        }
+      });
+      actions.appendChild(cancelBtn);
+    }
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "btn btn-ghost";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", async () => {
+      try {
+        await deleteReminder(reminderId);
+        await refreshOpsData({ successMessage: "Reminder deleted." });
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+    actions.appendChild(deleteBtn);
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    if (String(reminder?.message || "").trim()) {
+      item.appendChild(note);
+    }
+    item.appendChild(actions);
+    elements.reminderList.appendChild(item);
+  }
+}
+
+function renderJobsList() {
+  if (!elements.jobList) {
+    return;
+  }
+  const rows = Array.isArray(state.ops.jobs) ? state.ops.jobs : [];
+  if (!rows.length) {
+    fillEmptyOpsList(elements.jobList, "No jobs queued yet.");
+    return;
+  }
+
+  elements.jobList.innerHTML = "";
+  for (const job of rows) {
+    const item = document.createElement("div");
+    item.className = "ops-item";
+
+    const title = document.createElement("div");
+    title.className = "ops-item-title";
+    title.textContent = `${String(job?.job_type || "job")} [${String(job?.status || "pending")}]`;
+
+    const meta = document.createElement("div");
+    meta.className = "ops-item-meta";
+    meta.textContent = `run_at=${formatDateTime(String(job?.run_at || ""))} | updated=${formatDateTime(String(job?.updated_at || ""))}`;
+
+    const payloadView = document.createElement("div");
+    payloadView.className = "ops-code";
+    payloadView.textContent = JSON.stringify(job?.payload || {}, null, 2);
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    item.appendChild(payloadView);
+    elements.jobList.appendChild(item);
+  }
+}
+
+function renderAuditLogs() {
+  if (!elements.auditList) {
+    return;
+  }
+  const rows = Array.isArray(state.ops.auditLogs) ? state.ops.auditLogs : [];
+  if (!rows.length) {
+    fillEmptyOpsList(elements.auditList, "No audit events yet.");
+    return;
+  }
+
+  elements.auditList.innerHTML = "";
+  for (const row of rows) {
+    const item = document.createElement("div");
+    item.className = "ops-item";
+
+    const title = document.createElement("div");
+    title.className = "ops-item-title";
+    title.textContent = `${String(row?.action || "action")} [${String(row?.status || "")}]`;
+
+    const meta = document.createElement("div");
+    meta.className = "ops-item-meta";
+    meta.textContent = formatDateTime(String(row?.created_at || ""));
+
+    const details = document.createElement("div");
+    details.className = "ops-code";
+    details.textContent = JSON.stringify(row?.metadata || {}, null, 2);
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    item.appendChild(details);
+    elements.auditList.appendChild(item);
+  }
+}
+
+function renderRagResults() {
+  if (!elements.ragResults) {
+    return;
+  }
+  const rows = Array.isArray(state.ops.ragResults) ? state.ops.ragResults : [];
+  if (!rows.length) {
+    fillEmptyOpsList(elements.ragResults, "No RAG query results yet.");
+    return;
+  }
+
+  elements.ragResults.innerHTML = "";
+  for (const row of rows) {
+    const item = document.createElement("div");
+    item.className = "ops-item";
+
+    const title = document.createElement("div");
+    title.className = "ops-item-title";
+    title.textContent = String(row?.file_path || "Unknown file");
+
+    const meta = document.createElement("div");
+    meta.className = "ops-item-meta";
+    meta.textContent = `score=${Number(row?.score || 0).toFixed(3)} | chunk=${Number(row?.chunk_index || 0)}`;
+
+    const snippet = document.createElement("div");
+    snippet.className = "ops-code";
+    snippet.textContent = String(row?.snippet || "");
+
+    item.appendChild(title);
+    item.appendChild(meta);
+    item.appendChild(snippet);
+    elements.ragResults.appendChild(item);
+  }
+}
+
+function renderOpsPanel() {
+  renderPermissionsList();
+  renderRoutinesList();
+  renderRemindersList();
+  renderJobsList();
+  renderAuditLogs();
+  renderRagResults();
+}
+
+async function refreshOpsData(options = {}) {
+  if (!state.auth.accessToken) {
+    return;
+  }
+  const showProgress = Boolean(options.showProgress);
+  const successMessage = String(options.successMessage || "").trim();
+  if (showProgress) {
+    setOpsStatus("Refreshing controls...", "neutral");
+  }
+
+  const results = await Promise.allSettled([
+    fetchPermissions(),
+    fetchRoutines(),
+    fetchReminders(),
+    fetchJobs(),
+    fetchAuditLogs()
+  ]);
+
+  renderOpsPanel();
+
+  const failed = results.find((item) => item.status === "rejected");
+  if (failed && failed.reason) {
+    const message = failed.reason instanceof Error ? failed.reason.message : String(failed.reason);
+    setOpsStatus(message, "error");
+    addWorkflowEvent("warning", `Controls refresh issue: ${message}`);
+    return;
+  }
+  if (showProgress || successMessage) {
+    setOpsStatus(successMessage || "Controls refreshed.", "success");
+  }
+}
+
+async function fetchPendingApprovals() {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/approvals/pending`);
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Approvals fetch failed (${response.status})`));
+  }
+  const payload = await response.json();
+  state.approvals = Array.isArray(payload?.approvals) ? payload.approvals : [];
+}
+
+async function decideApproval(approvalId, decision) {
+  const response = await authorizedFetch(
+    `${BACKEND_BASE_URL}/approvals/${encodeURIComponent(approvalId)}/decision`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ decision, note: "" })
+    }
+  );
+  if (!response.ok) {
+    throw new Error(await parseErrorResponse(response, `Approval decision failed (${response.status})`));
+  }
+}
+
+function renderApprovals() {
+  if (!elements.approvalList) {
+    return;
+  }
+  elements.approvalList.innerHTML = "";
+  if (!state.approvals.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = "No pending approvals.";
+    elements.approvalList.appendChild(empty);
+    return;
+  }
+
+  state.approvals.forEach((approval) => {
+    const item = document.createElement("div");
+    item.className = "approval-item";
+
+    const title = document.createElement("div");
+    title.className = "approval-title";
+    title.textContent = `Tool: ${String(approval.tool_name || "tool")} (${String(approval.approval_id || "")})`;
+
+    const args = document.createElement("div");
+    args.className = "workflow-content";
+    args.textContent = JSON.stringify(approval.tool_args || {}, null, 2);
+
+    const actions = document.createElement("div");
+    actions.className = "approval-actions";
+
+    const approveBtn = document.createElement("button");
+    approveBtn.type = "button";
+    approveBtn.className = "btn btn-primary";
+    approveBtn.textContent = "Approve";
+    approveBtn.addEventListener("click", async () => {
+      try {
+        await decideApproval(String(approval.approval_id || ""), "approved");
+        await fetchPendingApprovals();
+        renderApprovals();
+      } catch (err) {
+        addWorkflowEvent("warning", err instanceof Error ? err.message : String(err));
+      }
+    });
+
+    const denyBtn = document.createElement("button");
+    denyBtn.type = "button";
+    denyBtn.className = "btn btn-ghost";
+    denyBtn.textContent = "Deny";
+    denyBtn.addEventListener("click", async () => {
+      try {
+        await decideApproval(String(approval.approval_id || ""), "denied");
+        await fetchPendingApprovals();
+        renderApprovals();
+      } catch (err) {
+        addWorkflowEvent("warning", err instanceof Error ? err.message : String(err));
+      }
+    });
+
+    actions.appendChild(approveBtn);
+    actions.appendChild(denyBtn);
+    item.appendChild(title);
+    item.appendChild(args);
+    item.appendChild(actions);
+    elements.approvalList.appendChild(item);
+  });
+}
+
+async function pollNotifications() {
+  if (!state.auth.accessToken) {
+    return;
+  }
+  try {
+    const response = await authorizedFetch(`${BACKEND_BASE_URL}/notifications?unread_only=true`);
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    const notifications = Array.isArray(payload?.notifications) ? payload.notifications : [];
+    for (const item of notifications) {
+      const id = String(item?.id || "");
+      if (!id || state.notificationCursor === id) {
+        continue;
+      }
+
+      const title = String(item?.title || "JOI");
+      const body = String(item?.body || "");
+      if (window.joiDesktop?.showDesktopNotification) {
+        await window.joiDesktop.showDesktopNotification(title, body);
+      }
+      state.notificationCursor = id;
+
+      await authorizedFetch(`${BACKEND_BASE_URL}/notifications/${encodeURIComponent(id)}/read`, {
+        method: "POST"
+      });
+    }
+  } catch (_err) {
+    // Polling failures should not break chat flow.
+  }
+}
+
+function startNotificationPolling() {
+  if (state.notificationTimer) {
+    clearInterval(state.notificationTimer);
+  }
+  state.notificationTimer = setInterval(() => {
+    void pollNotifications();
+  }, 15000);
+}
+
+function stopNotificationPolling() {
+  if (state.notificationTimer) {
+    clearInterval(state.notificationTimer);
+    state.notificationTimer = null;
+  }
+}
+
+function bindDesktopEventBridge() {
+  if (!window.joiDesktop?.onDesktopEvent) {
+    return;
+  }
+  if (typeof state.desktopEventUnsubscribe === "function") {
+    state.desktopEventUnsubscribe();
+  }
+  state.desktopEventUnsubscribe = window.joiDesktop.onDesktopEvent((event) => {
+    const name = String(event?.name || "");
+    if (name === "quick_command_toggle") {
+      openQuickCommandOverlay();
+    } else if (name === "voice_toggle") {
+      void toggleVoiceRecording();
+    }
+  });
 }
 
 function normalizeAssistantText(text) {
@@ -252,8 +1341,12 @@ function updateConversationSummary(conversation) {
 }
 
 function saveState() {
+  if (!state.auth.user?.id) {
+    return;
+  }
+
   localStorage.setItem(
-    STORAGE_KEY,
+    getConversationStorageKey(),
     JSON.stringify({
       model: state.model,
       ttsEnabled: state.ttsEnabled,
@@ -264,7 +1357,17 @@ function saveState() {
 }
 
 function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const storageKey = getConversationStorageKey();
+  let raw = localStorage.getItem(storageKey);
+  if (!raw && storageKey !== LEGACY_STORAGE_KEY) {
+    raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+  }
+
+  state.conversations = [];
+  state.activeConversationId = null;
+  state.model = "openai";
+  state.ttsEnabled = true;
+
   if (!raw) {
     return;
   }
@@ -283,13 +1386,133 @@ function loadState() {
       state.ttsEnabled = parsed.ttsEnabled;
     }
   } catch (_err) {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKey);
+  }
+}
+
+function saveAuthState() {
+  if (!state.auth.accessToken || !state.auth.user?.id) {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+    return;
+  }
+
+  localStorage.setItem(
+    AUTH_STORAGE_KEY,
+    JSON.stringify({
+      accessToken: state.auth.accessToken,
+      user: state.auth.user
+    })
+  );
+}
+
+function loadAuthState() {
+  const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!raw) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const token = String(parsed?.accessToken || "").trim();
+    const user = parsed?.user && typeof parsed.user === "object" ? parsed.user : null;
+    if (token && user?.id) {
+      state.auth.accessToken = token;
+      state.auth.user = user;
+      return;
+    }
+  } catch (_err) {
+    // noop
+  }
+
+  localStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
+function clearConversationState() {
+  state.conversations = [];
+  state.activeConversationId = null;
+  state.streamingMessageId = null;
+  state.streamTextQueue = [];
+  state.streamDonePending = false;
+  stopStreamTypingLoop();
+}
+
+function setAuthSession(payload) {
+  state.auth.accessToken = String(payload?.access_token || "").trim();
+  state.auth.user = payload?.user && typeof payload.user === "object" ? payload.user : null;
+  saveAuthState();
+}
+
+function clearAuthSession() {
+  state.auth.accessToken = "";
+  state.auth.user = null;
+  state.approvals = [];
+  state.memory = { preferences: "", notes: "" };
+  state.ops = { permissions: {}, routines: [], reminders: [], jobs: [], auditLogs: [], ragResults: [] };
+  state.notificationCursor = null;
+  saveAuthState();
+  clearConversationState();
+}
+
+function setAuthStatus(message, tone = "neutral") {
+  if (!elements.authStatus) {
+    return;
+  }
+  elements.authStatus.textContent = String(message || "");
+  elements.authStatus.classList.remove("is-error", "is-success");
+  if (tone === "error") {
+    elements.authStatus.classList.add("is-error");
+  } else if (tone === "success") {
+    elements.authStatus.classList.add("is-success");
+  }
+}
+
+function setAuthTab(tabName) {
+  const isSignUp = tabName === "signup";
+  elements.authTabs.forEach((btn) => {
+    const isActive = btn.dataset.authTab === tabName;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  if (elements.authSignInPanel) {
+    elements.authSignInPanel.classList.toggle("active", !isSignUp);
+  }
+  if (elements.authSignUpPanel) {
+    elements.authSignUpPanel.classList.toggle("active", isSignUp);
+  }
+  setAuthStatus("");
+}
+
+function updateAuthUI() {
+  const authenticated = Boolean(state.auth.accessToken && state.auth.user?.id);
+  if (elements.authScreen) {
+    elements.authScreen.classList.toggle("hidden", authenticated);
+  }
+  if (elements.currentUserName) {
+    elements.currentUserName.textContent = authenticated
+      ? getAuthDisplayName(state.auth.user)
+      : "Not signed in";
+  }
+
+  if (!authenticated) {
+    setConnection(false);
+    stopNotificationPolling();
+    clearConversationState();
+    closeQuickCommandOverlay();
+    closeMemoryModal();
+    closeOpsModal();
+    renderAll();
+    autoResizeInput();
+    updateBusyState();
   }
 }
 
 function createConversation() {
+  const userSuffix = String(state.auth.user?.id || "anon")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(-8) || "anon";
+
   const conversation = normalizeConversationRecord({
-    id: uid("conv"),
+    id: uid(`conv_${userSuffix}`),
     title: "New chat",
     titleGenerated: false,
     titleGenerating: false,
@@ -330,6 +1553,7 @@ function updateBusyState() {
   const busy = state.requestInFlight || state.transcribeInFlight;
   const hasDraft = Boolean(elements.promptInput.value.trim());
   const conversation = getActiveConversation();
+  const signedIn = Boolean(state.auth.accessToken);
 
   elements.sendBtn.disabled = busy || !hasDraft || state.isRecording;
   elements.sendBtn.classList.toggle("show", hasDraft && !state.isRecording);
@@ -347,6 +1571,12 @@ function updateBusyState() {
   elements.recordingCancelBtn.disabled = busy;
   elements.recordingConfirmBtn.disabled = busy;
   elements.closeWorkflowBtn.disabled = !conversation || conversation.workflowRunning;
+  if (elements.memoryBtn) {
+    elements.memoryBtn.disabled = !signedIn;
+  }
+  if (elements.opsBtn) {
+    elements.opsBtn.disabled = !signedIn;
+  }
 }
 
 function addWorkflowEvent(type, content) {
@@ -568,8 +1798,12 @@ function renderMessages() {
       <div class="welcome-hints">
         <span class="welcome-chip">Summarize a topic</span>
         <span class="welcome-chip">Search the web</span>
-        <span class="welcome-chip">Manage files</span>
-        <span class="welcome-chip">Plan tasks</span>
+        <span class="welcome-chip">Workspace files</span>
+        <span class="welcome-chip">Email and calendar</span>
+        <span class="welcome-chip">Memory and approvals</span>
+        <span class="welcome-chip">RAG over local docs</span>
+        <span class="welcome-chip">Routines and reminders</span>
+        <span class="welcome-chip">Jobs and notifications</span>
       </div>
     `;
     elements.chatMessages.appendChild(welcome);
@@ -730,6 +1964,7 @@ function renderAll() {
   renderHistory();
   renderMessages();
   renderWorkflow();
+  renderApprovals();
 }
 
 function normalizeConversationTitle(text) {
@@ -797,7 +2032,7 @@ async function generateConversationTitle(conversationId) {
   const fallbackText = history.find((m) => m.role === "user")?.content || "";
 
   try {
-    const response = await fetch(`${BACKEND_BASE_URL}/chat/title`, {
+    const response = await authorizedFetch(`${BACKEND_BASE_URL}/chat/title`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ history, fallback_text: fallbackText })
@@ -886,7 +2121,7 @@ function getSpeechFriendlyText(text) {
 }
 
 async function fetchTTSAudioBlob(text) {
-  const response = await fetch(`${BACKEND_BASE_URL}/audio/speak`, {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/audio/speak`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1005,7 +2240,7 @@ async function speakAssistantMessage(messageId) {
 }
 
 async function submitFeedback(conversationId, message, feedback) {
-  const response = await fetch(`${BACKEND_BASE_URL}/feedback`, {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/feedback`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1200,6 +2435,29 @@ function handleSSEEvent(eventName, payload) {
     return;
   }
 
+  if (eventName === "workflow_step_requires_approval") {
+    const details = [
+      `Approval required for tool: ${String(payload.tool || "tool")}`,
+      `Approval ID: ${String(payload.approval_id || "")}`,
+      "",
+      JSON.stringify(payload.args || {}, null, 2)
+    ].join("\n");
+    addWorkflowEvent("approval_required", details);
+    void fetchPendingApprovals()
+      .then(() => renderApprovals())
+      .catch(() => {});
+    return;
+  }
+
+  if (eventName === "workflow_step_blocked") {
+    const details = [
+      `Tool blocked: ${String(payload.tool || "tool")}`,
+      String(payload.reason || "Blocked by policy")
+    ].join("\n");
+    addWorkflowEvent("step_blocked", details);
+    return;
+  }
+
   if (eventName === "workflow_completed") {
     conversation.workflowRunning = false;
     conversation.workflowCompleted = true;
@@ -1252,8 +2510,15 @@ async function streamAssistantResponse(userText) {
   const history = conversation.messages
     .filter((msg) => (msg.role === "user" || msg.role === "assistant") && !msg.streaming)
     .map((msg) => ({ role: msg.role, content: msg.content }));
+  const activeContext = await getActiveAppContext();
+  if (activeContext.app || activeContext.title) {
+    history.unshift({
+      role: "system",
+      content: `Active desktop context: app=${activeContext.app || "unknown"}, title=${activeContext.title || ""}`
+    });
+  }
 
-  const response = await fetch(`${BACKEND_BASE_URL}/chat/stream`, {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1288,6 +2553,12 @@ async function streamAssistantResponse(userText) {
 }
 
 async function sendMessage() {
+  if (!state.auth.accessToken) {
+    updateAuthUI();
+    setAuthStatus("Please sign in to continue.", "error");
+    return;
+  }
+
   const text = elements.promptInput.value.trim();
   if (!text) {
     return;
@@ -1363,7 +2634,7 @@ async function transcribeAudioBlob(blob) {
   form.append("file", file);
   form.append("model", "whisper-1");
 
-  const response = await fetch(`${BACKEND_BASE_URL}/audio/transcribe`, {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/audio/transcribe`, {
     method: "POST",
     body: form
   });
@@ -1524,7 +2795,7 @@ function autoResizeInput() {
 }
 
 async function fetchSessionList() {
-  const response = await fetch(`${BACKEND_BASE_URL}/sessions`);
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/sessions`);
   if (!response.ok) {
     throw new Error(`Session list failed (${response.status})`);
   }
@@ -1533,7 +2804,7 @@ async function fetchSessionList() {
 }
 
 async function fetchSessionById(sessionId) {
-  const response = await fetch(`${BACKEND_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`);
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`);
   if (!response.ok) {
     throw new Error(`Session load failed (${response.status})`);
   }
@@ -1541,7 +2812,7 @@ async function fetchSessionById(sessionId) {
 }
 
 async function deleteSessionById(sessionId) {
-  const response = await fetch(`${BACKEND_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`, {
+  const response = await authorizedFetch(`${BACKEND_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`, {
     method: "DELETE"
   });
   if (!response.ok && response.status !== 404) {
@@ -1604,7 +2875,7 @@ function mergeSessionSummaries(sessionSummaries) {
 }
 
 async function syncSessionsFromBackend() {
-  if (!state.connected || state.sessionsSyncInFlight) {
+  if (!state.connected || state.sessionsSyncInFlight || !state.auth.accessToken) {
     return;
   }
 
@@ -1639,6 +2910,215 @@ async function checkBackendHealth() {
   }
 }
 
+async function fetchAuthConfig() {
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}/auth/config`);
+    if (!response.ok) {
+      return;
+    }
+    const payload = await response.json();
+    state.auth.googleClientId = String(payload?.google_client_id || "").trim();
+  } catch (_err) {
+    state.auth.googleClientId = "";
+  }
+}
+
+async function restoreAuthSession() {
+  if (!state.auth.accessToken) {
+    return false;
+  }
+
+  try {
+    const response = await authorizedFetch(`${BACKEND_BASE_URL}/auth/me`);
+    if (!response.ok) {
+      return false;
+    }
+    const payload = await response.json();
+    if (!payload?.user?.id) {
+      return false;
+    }
+    state.auth.user = payload.user;
+    saveAuthState();
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function initGoogleSignInButton() {
+  if (!elements.googleButtonWrap) {
+    return;
+  }
+
+  elements.googleButtonWrap.innerHTML = "";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "google-desktop-btn";
+  button.innerHTML = `
+    <span class="google-desktop-mark" aria-hidden="true">G</span>
+    <span>Continue with Google</span>
+  `;
+
+  const hasClientId = Boolean(String(state.auth.googleClientId || "").trim());
+  const hasBridge = Boolean(window.joiDesktop?.startGoogleDesktopOAuth);
+
+  if (!hasClientId || !hasBridge) {
+    button.disabled = true;
+    button.title = !hasClientId
+      ? "Google OAuth is not configured in backend."
+      : "Desktop OAuth bridge is unavailable.";
+  } else {
+    button.addEventListener("click", () => {
+      void handleGoogleDesktopSignIn();
+    });
+  }
+
+  elements.googleButtonWrap.appendChild(button);
+}
+
+async function initializeAuthenticatedApp() {
+  loadState();
+  ensureConversation();
+  elements.modelSelect.value = state.model;
+  await fetchMemory().catch(() => {});
+  await fetchPendingApprovals().catch(() => {});
+  await refreshOpsData().catch(() => {});
+  updateAuthUI();
+  renderAll();
+  autoResizeInput();
+  updateBusyState();
+  startNotificationPolling();
+  void pollNotifications();
+
+  const healthy = await checkBackendHealth();
+  if (healthy) {
+    await syncSessionsFromBackend();
+  }
+}
+
+async function handleSignInSubmit(event) {
+  event.preventDefault();
+  setAuthStatus("");
+
+  const email = String(elements.signInEmail.value || "").trim();
+  const password = String(elements.signInPassword.value || "");
+  if (!email || !password) {
+    setAuthStatus("Email and password are required.", "error");
+    return;
+  }
+
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+
+    if (!response.ok) {
+      setAuthStatus(await parseErrorResponse(response, "Unable to sign in."), "error");
+      return;
+    }
+
+    const payload = await response.json();
+    setAuthSession(payload);
+    setAuthStatus("Sign-in successful.", "success");
+    await initializeAuthenticatedApp();
+  } catch (_err) {
+    setAuthStatus("Unable to sign in right now. Please try again.", "error");
+  }
+}
+
+async function handleSignUpSubmit(event) {
+  event.preventDefault();
+  setAuthStatus("");
+
+  const firstName = String(elements.signUpFirstName.value || "").trim();
+  const lastName = String(elements.signUpLastName.value || "").trim();
+  const email = String(elements.signUpEmail.value || "").trim();
+  const password = String(elements.signUpPassword.value || "");
+  const confirmPassword = String(elements.signUpConfirmPassword.value || "");
+
+  if (!firstName || !lastName || !email || !password || !confirmPassword) {
+    setAuthStatus("Please fill all sign-up fields.", "error");
+    return;
+  }
+
+  try {
+    const response = await fetch(`${BACKEND_BASE_URL}/auth/signup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        first_name: firstName,
+        last_name: lastName,
+        email,
+        password,
+        confirm_password: confirmPassword
+      })
+    });
+
+    if (!response.ok) {
+      setAuthStatus(await parseErrorResponse(response, "Unable to create account."), "error");
+      return;
+    }
+
+    const payload = await response.json();
+    setAuthSession(payload);
+    setAuthStatus("Account created successfully.", "success");
+    await initializeAuthenticatedApp();
+  } catch (_err) {
+    setAuthStatus("Unable to create account right now. Please try again.", "error");
+  }
+}
+
+async function handleGoogleDesktopSignIn() {
+  if (!window.joiDesktop?.startGoogleDesktopOAuth) {
+    setAuthStatus("Desktop OAuth bridge is unavailable.", "error");
+    return;
+  }
+
+  if (!state.auth.googleClientId) {
+    setAuthStatus("Google OAuth is not configured on backend.", "error");
+    return;
+  }
+
+  setAuthStatus("Signing in with Google...");
+  try {
+    const oauthPayload = await window.joiDesktop.startGoogleDesktopOAuth(state.auth.googleClientId);
+    if (!oauthPayload?.code || !oauthPayload?.code_verifier || !oauthPayload?.redirect_uri) {
+      setAuthStatus("Google OAuth callback was incomplete.", "error");
+      return;
+    }
+
+    const authResponse = await fetch(`${BACKEND_BASE_URL}/auth/google/desktop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(oauthPayload)
+    });
+
+    if (!authResponse.ok) {
+      setAuthStatus(await parseErrorResponse(authResponse, "Google sign-in failed."), "error");
+      return;
+    }
+
+    const payload = await authResponse.json();
+    setAuthSession(payload);
+    setAuthStatus("Google sign-in successful.", "success");
+    await initializeAuthenticatedApp();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Google sign-in failed. Please try again.";
+    setAuthStatus(msg, "error");
+  }
+}
+
+function handleLogout() {
+  stopCurrentSpeechPlayback();
+  stopNotificationPolling();
+  clearAuthSession();
+  updateAuthUI();
+  setAuthTab("signin");
+  setAuthStatus("You have been signed out.");
+}
+
 async function initDesktopMeta() {
   if (!window.joiDesktop?.getAppVersion) {
     return;
@@ -1652,6 +3132,190 @@ async function initDesktopMeta() {
 }
 
 function bindEvents() {
+  elements.authTabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      setAuthTab(btn.dataset.authTab === "signup" ? "signup" : "signin");
+    });
+  });
+
+  if (elements.signInForm) {
+    elements.signInForm.addEventListener("submit", (event) => {
+      void handleSignInSubmit(event);
+    });
+  }
+
+  if (elements.signUpForm) {
+    elements.signUpForm.addEventListener("submit", (event) => {
+      void handleSignUpSubmit(event);
+    });
+  }
+
+  if (elements.logoutBtn) {
+    elements.logoutBtn.addEventListener("click", handleLogout);
+  }
+
+  if (elements.memoryBtn) {
+    elements.memoryBtn.addEventListener("click", openMemoryModal);
+  }
+  if (elements.memoryCloseBtn) {
+    elements.memoryCloseBtn.addEventListener("click", closeMemoryModal);
+  }
+  if (elements.memorySaveBtn) {
+    elements.memorySaveBtn.addEventListener("click", async () => {
+      try {
+        await saveMemory();
+        addWorkflowEvent("status", "Memory saved.");
+        closeMemoryModal();
+      } catch (err) {
+        addWorkflowEvent("warning", err instanceof Error ? err.message : String(err));
+      }
+    });
+  }
+  if (elements.memoryClearBtn) {
+    elements.memoryClearBtn.addEventListener("click", async () => {
+      try {
+        await clearMemory();
+        addWorkflowEvent("status", "Memory cleared.");
+      } catch (err) {
+        addWorkflowEvent("warning", err instanceof Error ? err.message : String(err));
+      }
+    });
+  }
+
+  if (elements.opsBtn) {
+    elements.opsBtn.addEventListener("click", openOpsModal);
+  }
+  if (elements.opsCloseBtn) {
+    elements.opsCloseBtn.addEventListener("click", closeOpsModal);
+  }
+  if (elements.opsModal) {
+    elements.opsModal.addEventListener("click", (event) => {
+      if (event.target === elements.opsModal) {
+        closeOpsModal();
+      }
+    });
+  }
+  if (elements.opsRefreshBtn) {
+    elements.opsRefreshBtn.addEventListener("click", () => {
+      void refreshOpsData({ showProgress: true });
+    });
+  }
+  if (elements.permSaveBtn) {
+    elements.permSaveBtn.addEventListener("click", async () => {
+      try {
+        const toolName = String(elements.permToolName?.value || "").trim();
+        const mode = String(elements.permMode?.value || "allow").trim();
+        await savePermissionRule(toolName, mode);
+        renderPermissionsList();
+        setOpsStatus(`Saved permission for ${toolName}.`, "success");
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+  }
+  if (elements.ragIndexBtn) {
+    elements.ragIndexBtn.addEventListener("click", async () => {
+      try {
+        setOpsStatus("Indexing files...", "neutral");
+        const summary = await runRagIndex();
+        setOpsStatus(
+          `Indexed ${Number(summary?.indexed_files || 0)} files, chunks=${Number(summary?.chunk_count || 0)}.`,
+          "success"
+        );
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+  }
+  if (elements.ragQueryBtn) {
+    elements.ragQueryBtn.addEventListener("click", async () => {
+      try {
+        await runRagQuery();
+        renderRagResults();
+        setOpsStatus(`RAG returned ${state.ops.ragResults.length} results.`, "success");
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+  }
+  if (elements.routineCreateBtn) {
+    elements.routineCreateBtn.addEventListener("click", async () => {
+      try {
+        await createRoutine();
+        if (elements.routineNameInput) {
+          elements.routineNameInput.value = "";
+        }
+        if (elements.routinePromptInput) {
+          elements.routinePromptInput.value = "";
+        }
+        await refreshOpsData({ successMessage: "Routine created." });
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+  }
+  if (elements.reminderCreateBtn) {
+    elements.reminderCreateBtn.addEventListener("click", async () => {
+      try {
+        await createReminder();
+        if (elements.reminderTitleInput) {
+          elements.reminderTitleInput.value = "";
+        }
+        if (elements.reminderMessageInput) {
+          elements.reminderMessageInput.value = "";
+        }
+        await refreshOpsData({ successMessage: "Reminder created." });
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+  }
+  if (elements.jobCreateBtn) {
+    elements.jobCreateBtn.addEventListener("click", async () => {
+      try {
+        await createJob();
+        await refreshOpsData({ successMessage: "Job queued." });
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+  }
+  if (elements.auditRefreshBtn) {
+    elements.auditRefreshBtn.addEventListener("click", async () => {
+      try {
+        await fetchAuditLogs();
+        renderAuditLogs();
+        setOpsStatus("Audit logs refreshed.", "success");
+      } catch (err) {
+        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+      }
+    });
+  }
+
+  if (elements.quickCommandForm) {
+    elements.quickCommandForm.addEventListener("submit", (event) => {
+      void handleQuickCommandSubmit(event);
+    });
+  }
+  if (elements.quickCommandCloseBtn) {
+    elements.quickCommandCloseBtn.addEventListener("click", closeQuickCommandOverlay);
+  }
+  if (elements.quickCommandOverlay) {
+    elements.quickCommandOverlay.addEventListener("click", (event) => {
+      if (event.target === elements.quickCommandOverlay) {
+        closeQuickCommandOverlay();
+      }
+    });
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeQuickCommandOverlay();
+      closeMemoryModal();
+      closeOpsModal();
+    }
+  });
+
   elements.sendBtn.addEventListener("click", () => {
     void sendMessage();
   });
@@ -1700,18 +3364,28 @@ function bindEvents() {
 }
 
 async function bootstrap() {
-  loadState();
-  ensureConversation();
-  elements.modelSelect.value = state.model;
-  setConnection(false);
   bindEvents();
-  renderAll();
-  autoResizeInput();
-  updateBusyState();
-  const healthy = await checkBackendHealth();
-  if (healthy) {
-    await syncSessionsFromBackend();
+  bindDesktopEventBridge();
+  setAuthTab("signin");
+  setConnection(false);
+  loadAuthState();
+  await fetchAuthConfig();
+  initGoogleSignInButton();
+
+  const restored = await restoreAuthSession();
+  if (restored) {
+    await initializeAuthenticatedApp();
+  } else {
+    updateAuthUI();
+    renderAll();
+    autoResizeInput();
+    updateBusyState();
+    await checkBackendHealth();
   }
+
+  initGoogleSignInButton();
+  updateAuthUI();
+  renderAll();
   void initDesktopMeta();
 }
 
