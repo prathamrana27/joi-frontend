@@ -1,16 +1,25 @@
 const path = require("path");
+const fs = require("fs");
 const http = require("http");
 const nodeCrypto = require("crypto");
-const { execFile } = require("child_process");
-const { app, BrowserWindow, ipcMain, shell, globalShortcut, Notification } = require("electron");
+const { execFile, spawn } = require("child_process");
+const { app, BrowserWindow, ipcMain, shell, globalShortcut, Notification, dialog } = require("electron");
 
 const OAUTH_HOST = "127.0.0.1";
 const OAUTH_PORT = 53682;
 const OAUTH_CALLBACK_PATH = "/oauth2callback";
 const OAUTH_TIMEOUT_MS = 3 * 60 * 1000;
+const BACKEND_HOST = process.env.JOI_BACKEND_HOST || "127.0.0.1";
+const BACKEND_PORT = Number.parseInt(process.env.JOI_BACKEND_PORT || "8000", 10);
+const BACKEND_STARTUP_TIMEOUT_MS = 45_000;
+const BACKEND_POLL_INTERVAL_MS = 700;
 
 let oauthInFlight = false;
 let mainWindow = null;
+let backendProcess = null;
+let backendStartupPromise = null;
+let appIsQuitting = false;
+let shutdownInProgress = false;
 
 function toBase64Url(buffer) {
   return Buffer.from(buffer)
@@ -173,6 +182,229 @@ function runDesktopGoogleOAuth(clientId) {
   });
 }
 
+function backendHealthCheck(timeoutMs = 1200) {
+  return new Promise((resolve) => {
+    const req = http.get(
+      {
+        hostname: BACKEND_HOST,
+        port: BACKEND_PORT,
+        path: "/health",
+        timeout: timeoutMs
+      },
+      (res) => {
+        res.resume();
+        resolve(res.statusCode === 200);
+      }
+    );
+
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on("error", () => resolve(false));
+  });
+}
+
+async function waitForBackendReady(timeoutMs = BACKEND_STARTUP_TIMEOUT_MS) {
+  const deadline = Date.now() + Math.max(2000, timeoutMs);
+  while (Date.now() < deadline) {
+    if (await backendHealthCheck()) {
+      return true;
+    }
+    if (backendProcess && backendProcess.exitCode !== null) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, BACKEND_POLL_INTERVAL_MS));
+  }
+  return false;
+}
+
+function ensureDir(dirPath) {
+  if (!fs.existsSync(dirPath)) {
+    fs.mkdirSync(dirPath, { recursive: true });
+  }
+}
+
+function preparePackagedBackendRuntime(packagedBackendDir) {
+  const backendDataDir = path.join(app.getPath("userData"), "backend");
+  const backendToolsDataDir = path.join(backendDataDir, "tools");
+  ensureDir(backendDataDir);
+  ensureDir(backendToolsDataDir);
+
+  let packagedEnvExample = path.join(packagedBackendDir, "env-template.txt");
+  if (!fs.existsSync(packagedEnvExample)) {
+    packagedEnvExample = path.join(packagedBackendDir, ".env.example");
+  }
+  const userEnvExample = path.join(backendDataDir, ".env.example");
+  if (fs.existsSync(packagedEnvExample) && !fs.existsSync(userEnvExample)) {
+    fs.copyFileSync(packagedEnvExample, userEnvExample);
+  }
+
+  const packagedCreds = path.join(packagedBackendDir, "tools", "credentials.json");
+  const userCreds = path.join(backendToolsDataDir, "credentials.json");
+  if (fs.existsSync(packagedCreds) && !fs.existsSync(userCreds)) {
+    fs.copyFileSync(packagedCreds, userCreds);
+  }
+
+  return {
+    envPath: path.join(backendDataDir, ".env"),
+    googleToolsDir: backendToolsDataDir
+  };
+}
+
+function resolveBackendLaunchConfig() {
+  const repoBackendDir = path.resolve(__dirname, "../../joi-backend");
+  const builtBackendDir = path.resolve(repoBackendDir, "dist/joi-backend");
+  const packagedBackendDir = path.join(process.resourcesPath, "backend");
+  const exeName = process.platform === "win32" ? "joi-backend.exe" : "joi-backend";
+
+  // Prefer packaged backend when app is distributed.
+  if (app.isPackaged) {
+    const packagedExe = path.join(packagedBackendDir, exeName);
+    if (!fs.existsSync(packagedExe)) {
+      throw new Error(`Packaged backend executable not found: ${packagedExe}`);
+    }
+    const runtimePaths = preparePackagedBackendRuntime(packagedBackendDir);
+    return {
+      command: packagedExe,
+      args: [],
+      cwd: packagedBackendDir,
+      envPath: runtimePaths.envPath,
+      googleToolsDir: runtimePaths.googleToolsDir
+    };
+  }
+
+  // In local development, prefer already-built backend executable if present.
+  const builtExe = path.join(builtBackendDir, exeName);
+  if (fs.existsSync(builtExe)) {
+    return {
+      command: builtExe,
+      args: [],
+      cwd: builtBackendDir,
+      envPath: path.join(repoBackendDir, ".env"),
+      googleToolsDir: path.join(repoBackendDir, "tools")
+    };
+  }
+
+  // Fallback to python source execution.
+  const pythonCmd = process.env.JOI_PYTHON_BIN || "python";
+  const backendEntry = path.join(repoBackendDir, "api_server.py");
+  return {
+    command: pythonCmd,
+    args: [backendEntry],
+    cwd: repoBackendDir,
+    envPath: path.join(repoBackendDir, ".env"),
+    googleToolsDir: path.join(repoBackendDir, "tools")
+  };
+}
+
+async function stopBackendProcess() {
+  if (!backendProcess) {
+    return;
+  }
+
+  const proc = backendProcess;
+  backendProcess = null;
+
+  if (proc.exitCode !== null) {
+    return;
+  }
+
+  await new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve();
+    };
+
+    proc.once("exit", done);
+
+    try {
+      if (process.platform === "win32") {
+        execFile(
+          "taskkill",
+          ["/pid", String(proc.pid), "/t", "/f"],
+          { windowsHide: true },
+          () => done()
+        );
+      } else {
+        proc.kill("SIGTERM");
+      }
+    } catch (_err) {
+      done();
+    }
+
+    setTimeout(done, 3000);
+  });
+}
+
+async function ensureBackendRunning() {
+  if (await backendHealthCheck()) {
+    return;
+  }
+
+  if (backendStartupPromise) {
+    await backendStartupPromise;
+    return;
+  }
+
+  backendStartupPromise = (async () => {
+    const launch = resolveBackendLaunchConfig();
+    const env = {
+      ...process.env,
+      PYTHONUNBUFFERED: "1",
+      JOI_ENV_PATH: launch.envPath,
+      JOI_GOOGLE_TOOLS_DIR: launch.googleToolsDir
+    };
+
+    backendProcess = spawn(launch.command, launch.args, {
+      cwd: launch.cwd,
+      env,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+
+    backendProcess.stdout?.on("data", (chunk) => {
+      const line = String(chunk || "").trim();
+      if (line) {
+        console.log(`[backend] ${line}`);
+      }
+    });
+
+    backendProcess.stderr?.on("data", (chunk) => {
+      const line = String(chunk || "").trim();
+      if (line) {
+        console.error(`[backend] ${line}`);
+      }
+    });
+
+    backendProcess.once("exit", (code, signal) => {
+      const expected = appIsQuitting;
+      if (!expected) {
+        const reason = signal ? `signal ${signal}` : `code ${code}`;
+        dialog.showErrorBox("Backend Stopped", `JOI backend stopped unexpectedly (${reason}).`);
+      }
+    });
+
+    const ready = await waitForBackendReady(BACKEND_STARTUP_TIMEOUT_MS);
+    if (!ready) {
+      await stopBackendProcess();
+      throw new Error(
+        `Backend failed to become healthy at http://${BACKEND_HOST}:${BACKEND_PORT}/health`
+      );
+    }
+  })();
+
+  try {
+    await backendStartupPromise;
+  } finally {
+    backendStartupPromise = null;
+  }
+}
+
 function createMainWindow() {
   const appIconPath = path.join(__dirname, "../renderer/assets/joi-logo-icon.png");
   mainWindow = new BrowserWindow({
@@ -272,7 +504,7 @@ function getWindowsActiveAppContext() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   ipcMain.handle("app-version", () => app.getVersion());
   ipcMain.handle("open-external", async (_event, url) => {
     if (!url || typeof url !== "string") {
@@ -312,6 +544,15 @@ app.whenReady().then(() => {
     return { app: "", title: "", pid: 0 };
   });
 
+  try {
+    await ensureBackendRunning();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    dialog.showErrorBox("Backend Startup Failed", `Unable to start JOI backend.\n\n${reason}`);
+    app.quit();
+    return;
+  }
+
   createMainWindow();
   registerGlobalHotkeys();
 
@@ -323,7 +564,23 @@ app.whenReady().then(() => {
   });
 });
 
+app.on("before-quit", (event) => {
+  if (shutdownInProgress) {
+    return;
+  }
+  shutdownInProgress = true;
+  appIsQuitting = true;
+  event.preventDefault();
+  stopBackendProcess()
+    .catch(() => {})
+    .finally(() => {
+      app.removeAllListeners("before-quit");
+      app.quit();
+    });
+});
+
 app.on("will-quit", () => {
+  appIsQuitting = true;
   globalShortcut.unregisterAll();
 });
 

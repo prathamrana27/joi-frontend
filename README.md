@@ -18,3 +18,16 @@ This frontend runs as an Electron desktop app and streams chat responses over SS
 - Conversation history sidebar
 - Workflow/tool event panel
 - Streaming assistant responses
+
+## Build Windows EXE (Frontend + Backend bundled)
+
+1. From `joi-frontend`, install dependencies:
+   `npm install`
+2. Run packaging:
+   `npm run dist:win`
+
+What this does:
+- Builds backend executable with PyInstaller via `../joi-backend/build_backend.ps1`
+- Bundles that backend runtime into the Electron package
+- Produces a portable Windows `.exe` in:
+  `joi-frontend/release`
