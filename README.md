@@ -29,5 +29,6 @@ This frontend runs as an Electron desktop app and streams chat responses over SS
 What this does:
 - Builds backend executable with PyInstaller via `../joi-backend/build_backend.ps1`
 - Bundles that backend runtime into the Electron package
+- If `../joi-backend/.env` exists, it is bundled and copied to first-run runtime config
 - Produces a portable Windows `.exe` in:
   `joi-frontend/release`

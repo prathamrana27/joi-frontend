@@ -13,11 +13,13 @@ const BACKEND_HOST = process.env.JOI_BACKEND_HOST || "127.0.0.1";
 const BACKEND_PORT = Number.parseInt(process.env.JOI_BACKEND_PORT || "8000", 10);
 const BACKEND_STARTUP_TIMEOUT_MS = 45_000;
 const BACKEND_POLL_INTERVAL_MS = 700;
+const REQUIRED_BACKEND_KEY = "OPENAI_API_KEY";
 
 let oauthInFlight = false;
 let mainWindow = null;
 let backendProcess = null;
 let backendStartupPromise = null;
+let backendRecentLogs = [];
 let appIsQuitting = false;
 let shutdownInProgress = false;
 
@@ -225,9 +227,120 @@ function ensureDir(dirPath) {
   }
 }
 
+function tryCopyFileIfMissing(sourcePath, destinationPath) {
+  try {
+    if (!fs.existsSync(sourcePath) || fs.existsSync(destinationPath)) {
+      return false;
+    }
+    fs.copyFileSync(sourcePath, destinationPath);
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function parseEnvFileValue(filePath, key) {
+  if (!filePath || !key) {
+    return "";
+  }
+  try {
+    if (!fs.existsSync(filePath)) {
+      return "";
+    }
+    const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+    for (const rawLine of lines) {
+      const line = String(rawLine || "").trim();
+      if (!line || line.startsWith("#")) {
+        continue;
+      }
+      const separatorIndex = line.indexOf("=");
+      if (separatorIndex <= 0) {
+        continue;
+      }
+      const name = line.slice(0, separatorIndex).trim();
+      if (name !== key) {
+        continue;
+      }
+      const value = line.slice(separatorIndex + 1).trim();
+      return value.replace(/^['"]|['"]$/g, "");
+    }
+  } catch (_err) {
+    return "";
+  }
+  return "";
+}
+
+function isTemplateEnvValue(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  if (normalized.includes("xxxxxxxx")) {
+    return true;
+  }
+  if (normalized.includes("replace_with")) {
+    return true;
+  }
+  if (normalized.includes("your_")) {
+    return true;
+  }
+  return false;
+}
+
+function resolveUsableBackendApiKey(envPath) {
+  const fromProcessEnv = String(process.env[REQUIRED_BACKEND_KEY] || "").trim();
+  if (!isTemplateEnvValue(fromProcessEnv)) {
+    return fromProcessEnv;
+  }
+  const fromFile = parseEnvFileValue(envPath, REQUIRED_BACKEND_KEY);
+  if (!isTemplateEnvValue(fromFile)) {
+    return fromFile;
+  }
+  return "";
+}
+
+function envFileHasUsableApiKey(envPath) {
+  return !isTemplateEnvValue(parseEnvFileValue(envPath, REQUIRED_BACKEND_KEY));
+}
+
+function assertBackendConfigReady(envPath, envExamplePath = "") {
+  const apiKey = resolveUsableBackendApiKey(envPath);
+  if (apiKey) {
+    return;
+  }
+
+  const templateHint = envExamplePath
+    ? ` Use ${envExamplePath} as a reference.`
+    : "";
+  throw new Error(
+    `Missing required ${REQUIRED_BACKEND_KEY}. Add it in ${envPath}.${templateHint}`
+  );
+}
+
+function pushBackendLog(line) {
+  const text = String(line || "").trim();
+  if (!text) {
+    return;
+  }
+  backendRecentLogs.push(text);
+  if (backendRecentLogs.length > 10) {
+    backendRecentLogs = backendRecentLogs.slice(-10);
+  }
+}
+
+function getBackendLogTail(maxLines = 5) {
+  if (!backendRecentLogs.length) {
+    return "";
+  }
+  return backendRecentLogs.slice(-Math.max(1, maxLines)).join("\n");
+}
+
 function preparePackagedBackendRuntime(packagedBackendDir) {
   const backendDataDir = path.join(app.getPath("userData"), "backend");
   const backendToolsDataDir = path.join(backendDataDir, "tools");
+  const userEnvPath = path.join(backendDataDir, ".env");
+  const userEnvExample = path.join(backendDataDir, ".env.example");
+  const packagedEnvPath = path.join(packagedBackendDir, ".env");
   ensureDir(backendDataDir);
   ensureDir(backendToolsDataDir);
 
@@ -235,19 +348,46 @@ function preparePackagedBackendRuntime(packagedBackendDir) {
   if (!fs.existsSync(packagedEnvExample)) {
     packagedEnvExample = path.join(packagedBackendDir, ".env.example");
   }
-  const userEnvExample = path.join(backendDataDir, ".env.example");
-  if (fs.existsSync(packagedEnvExample) && !fs.existsSync(userEnvExample)) {
-    fs.copyFileSync(packagedEnvExample, userEnvExample);
+
+  // First run: copy packaged runtime env when available so portable builds work immediately.
+  tryCopyFileIfMissing(packagedEnvPath, userEnvPath);
+  // Fallback: create editable .env from template if no concrete env exists.
+  tryCopyFileIfMissing(packagedEnvExample, userEnvPath);
+  tryCopyFileIfMissing(packagedEnvExample, userEnvExample);
+
+  // If runtime .env is still a template, replace it with packaged runtime env when available.
+  if (
+    fs.existsSync(packagedEnvPath) &&
+    !envFileHasUsableApiKey(userEnvPath) &&
+    envFileHasUsableApiKey(packagedEnvPath)
+  ) {
+    try {
+      fs.copyFileSync(packagedEnvPath, userEnvPath);
+    } catch (_err) {
+      // If copy fails (portable runtime), launch directly with packaged env path.
+    }
+  }
+
+  let selectedEnvPath = userEnvPath;
+  if (!envFileHasUsableApiKey(selectedEnvPath) && envFileHasUsableApiKey(packagedEnvPath)) {
+    selectedEnvPath = packagedEnvPath;
+  }
+  if (!fs.existsSync(selectedEnvPath) && fs.existsSync(packagedEnvExample)) {
+    selectedEnvPath = packagedEnvExample;
+  }
+
+  let selectedEnvExamplePath = userEnvExample;
+  if (!fs.existsSync(selectedEnvExamplePath) && fs.existsSync(packagedEnvExample)) {
+    selectedEnvExamplePath = packagedEnvExample;
   }
 
   const packagedCreds = path.join(packagedBackendDir, "tools", "credentials.json");
   const userCreds = path.join(backendToolsDataDir, "credentials.json");
-  if (fs.existsSync(packagedCreds) && !fs.existsSync(userCreds)) {
-    fs.copyFileSync(packagedCreds, userCreds);
-  }
+  tryCopyFileIfMissing(packagedCreds, userCreds);
 
   return {
-    envPath: path.join(backendDataDir, ".env"),
+    envPath: selectedEnvPath,
+    envExamplePath: selectedEnvExamplePath,
     googleToolsDir: backendToolsDataDir
   };
 }
@@ -270,6 +410,7 @@ function resolveBackendLaunchConfig() {
       args: [],
       cwd: packagedBackendDir,
       envPath: runtimePaths.envPath,
+      envExamplePath: runtimePaths.envExamplePath,
       googleToolsDir: runtimePaths.googleToolsDir
     };
   }
@@ -282,6 +423,7 @@ function resolveBackendLaunchConfig() {
       args: [],
       cwd: builtBackendDir,
       envPath: path.join(repoBackendDir, ".env"),
+      envExamplePath: path.join(repoBackendDir, "dotenv-example"),
       googleToolsDir: path.join(repoBackendDir, "tools")
     };
   }
@@ -294,6 +436,7 @@ function resolveBackendLaunchConfig() {
     args: [backendEntry],
     cwd: repoBackendDir,
     envPath: path.join(repoBackendDir, ".env"),
+    envExamplePath: path.join(repoBackendDir, "dotenv-example"),
     googleToolsDir: path.join(repoBackendDir, "tools")
   };
 }
@@ -353,6 +496,8 @@ async function ensureBackendRunning() {
 
   backendStartupPromise = (async () => {
     const launch = resolveBackendLaunchConfig();
+    assertBackendConfigReady(launch.envPath, launch.envExamplePath);
+    backendRecentLogs = [];
     const env = {
       ...process.env,
       PYTHONUNBUFFERED: "1",
@@ -370,6 +515,7 @@ async function ensureBackendRunning() {
     backendProcess.stdout?.on("data", (chunk) => {
       const line = String(chunk || "").trim();
       if (line) {
+        pushBackendLog(line);
         console.log(`[backend] ${line}`);
       }
     });
@@ -377,6 +523,7 @@ async function ensureBackendRunning() {
     backendProcess.stderr?.on("data", (chunk) => {
       const line = String(chunk || "").trim();
       if (line) {
+        pushBackendLog(line);
         console.error(`[backend] ${line}`);
       }
     });
@@ -385,7 +532,9 @@ async function ensureBackendRunning() {
       const expected = appIsQuitting;
       if (!expected) {
         const reason = signal ? `signal ${signal}` : `code ${code}`;
-        dialog.showErrorBox("Backend Stopped", `JOI backend stopped unexpectedly (${reason}).`);
+        const tail = getBackendLogTail();
+        const detail = tail ? `\n\nRecent backend logs:\n${tail}` : "";
+        dialog.showErrorBox("Backend Stopped", `JOI backend stopped unexpectedly (${reason}).${detail}`);
       }
     });
 
@@ -548,7 +697,9 @@ app.whenReady().then(async () => {
     await ensureBackendRunning();
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    dialog.showErrorBox("Backend Startup Failed", `Unable to start JOI backend.\n\n${reason}`);
+    const tail = getBackendLogTail();
+    const detail = tail ? `\n\nRecent backend logs:\n${tail}` : "";
+    dialog.showErrorBox("Backend Startup Failed", `Unable to start JOI backend.\n\n${reason}${detail}`);
     app.quit();
     return;
   }
