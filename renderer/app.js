@@ -113,6 +113,7 @@ const state = {
   streamTextQueue: [],
   streamTimer: null,
   streamDonePending: false,
+  streamFinalText: "",
   auth: {
     accessToken: "",
     user: null,
@@ -1433,6 +1434,7 @@ function clearConversationState() {
   state.streamingMessageId = null;
   state.streamTextQueue = [];
   state.streamDonePending = false;
+  state.streamFinalText = "";
   stopStreamTypingLoop();
 }
 
@@ -2086,13 +2088,15 @@ function ensureStreamingMessage() {
 function finalizeStreamingMessage() {
   const conversation = getActiveConversation();
   if (!conversation || !state.streamingMessageId) {
+    state.streamFinalText = "";
     return;
   }
 
   const index = conversation.messages.findIndex((msg) => msg.id === state.streamingMessageId);
   if (index !== -1) {
     const message = conversation.messages[index];
-    message.content = normalizeAssistantText(message.content);
+    const finalText = String(state.streamFinalText || "").trim();
+    message.content = finalText || normalizeAssistantText(message.content);
     message.streaming = false;
     message.awaitingFirstChunk = false;
     if (!message.content) {
@@ -2101,6 +2105,7 @@ function finalizeStreamingMessage() {
   }
 
   state.streamingMessageId = null;
+  state.streamFinalText = "";
   conversation.updatedAt = nowIso();
   conversation.messagesLoaded = true;
   conversation.remoteAvailable = true;
@@ -2357,6 +2362,23 @@ function markStreamDone() {
   }
 }
 
+function applyFinalStreamText(text) {
+  const nextText = normalizeAssistantText(text);
+  if (!nextText) {
+    return;
+  }
+
+  state.streamFinalText = nextText;
+  state.streamTextQueue = [];
+
+  const message = ensureStreamingMessage();
+  if (message) {
+    message.content = nextText;
+    message.awaitingFirstChunk = false;
+    renderMessages();
+  }
+}
+
 function parseSSEFrames(chunk, stateBuffer, onFrame) {
   let buffer = (stateBuffer + chunk).replace(/\r\n/g, "\n");
   let separatorIndex = buffer.indexOf("\n\n");
@@ -2495,7 +2517,13 @@ function handleSSEEvent(eventName, payload) {
     return;
   }
 
-  if (eventName === "done" || eventName === "end") {
+  if (eventName === "done") {
+    applyFinalStreamText(payload.message || "");
+    markStreamDone();
+    return;
+  }
+
+  if (eventName === "end") {
     markStreamDone();
     return;
   }
@@ -2580,6 +2608,7 @@ async function sendMessage() {
 
   state.streamTextQueue = [];
   state.streamDonePending = false;
+  state.streamFinalText = "";
   stopStreamTypingLoop();
   conversation.workflow = [];
   conversation.workflowRunning = false;
