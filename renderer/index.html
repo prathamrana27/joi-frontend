@@ -8,7 +8,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Sora:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
@@ -16,6 +16,7 @@
   <body>
     <div class="bg-orb orb-a"></div>
     <div class="bg-orb orb-b"></div>
+    <div class="bg-orb orb-c"></div>
     <div id="authScreen" class="auth-screen">
       <div class="auth-glow auth-glow-a"></div>
       <div class="auth-glow auth-glow-b"></div>
@@ -87,7 +88,9 @@
           <div class="brand" aria-label="JOI">
             <div class="brand-logo" role="img" aria-label="JOI Logo"></div>
           </div>
-          <button id="newChatBtn" class="btn btn-primary">New Chat</button>
+          <button id="newChatBtn" class="btn btn-icon btn-primary" title="New Chat">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
         </div>
         <div class="panel-subtitle">Conversation History</div>
         <div id="historyList" class="history-list"></div>
@@ -107,10 +110,9 @@
             <select id="modelSelect" class="model-select">
               <option value="openai">OpenAI</option>
             </select>
-            <button id="memoryBtn" class="btn btn-ghost">Memory</button>
-            <button id="opsBtn" class="btn btn-ghost">Controls</button>
-            <div id="currentUserName" class="current-user-name">Not signed in</div>
-            <button id="logoutBtn" class="btn btn-ghost">Logout</button>
+            <div class="user-profile-trigger">
+              <div id="currentUserName" class="current-user-name">Not signed in</div>
+            </div>
           </div>
         </header>
 
@@ -218,121 +220,239 @@
       </form>
     </div>
 
-    <div id="memoryModal" class="memory-modal" aria-hidden="true">
-      <div class="memory-card">
-        <div class="panel-header">
-          <div>
-            <div class="panel-title">Personal Memory</div>
-            <div class="panel-subtitle">Used to personalize assistant behavior</div>
+    <div id="settingsModal" class="settings-modal hidden" aria-hidden="true">
+      <div class="settings-card">
+        <aside class="settings-sidebar">
+          <div class="settings-sidebar-header">
+            <h3>Settings</h3>
           </div>
-          <button id="memoryCloseBtn" class="btn btn-ghost" type="button">Close</button>
-        </div>
-        <label class="memory-label" for="memoryPreferences">Preferences</label>
-        <textarea id="memoryPreferences" class="memory-textarea" rows="5"></textarea>
-        <label class="memory-label" for="memoryNotes">Notes</label>
-        <textarea id="memoryNotes" class="memory-textarea" rows="7"></textarea>
-        <div class="memory-actions">
-          <button id="memoryClearBtn" class="btn btn-ghost" type="button">Clear</button>
-          <button id="memorySaveBtn" class="btn btn-primary" type="button">Save</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="opsModal" class="ops-modal" aria-hidden="true">
-      <div class="ops-card">
-        <div class="panel-header">
-          <div>
-            <div class="panel-title">Assistant Controls</div>
-            <div class="panel-subtitle">Manage permissions, automations, reminders, jobs, RAG and audit logs</div>
+          <nav class="settings-tabs">
+            <button class="settings-tab active" data-settings-tab="profile">Profile</button>
+            <button class="settings-tab" data-settings-tab="memory">Assistant Memory</button>
+            <button class="settings-tab" data-settings-tab="security">Security & Tools</button>
+            <button class="settings-tab" data-settings-tab="connectors">Connectors</button>
+            <button class="settings-tab" data-settings-tab="automation">Automations</button>
+            <button class="settings-tab" data-settings-tab="knowledge">Knowledge (RAG)</button>
+            <button class="settings-tab" data-settings-tab="audit">Audit Logs</button>
+          </nav>
+          <div class="settings-sidebar-footer">
+            <button id="logoutBtn" class="btn btn-ghost btn-full">Logout</button>
           </div>
-          <div class="workflow-header-actions">
-            <button id="opsRefreshBtn" class="btn btn-ghost" type="button">Refresh</button>
-            <button id="opsCloseBtn" class="btn btn-ghost" type="button">Close</button>
-          </div>
-        </div>
-        <div id="opsStatus" class="ops-status" aria-live="polite"></div>
+        </aside>
 
-        <div class="ops-grid">
-          <section class="ops-section">
-            <h3 class="ops-section-title">Permissions</h3>
-            <div class="ops-row">
-              <input id="permToolName" class="ops-input" type="text" placeholder="tool name (e.g. file_system)" />
-              <select id="permMode" class="ops-input">
-                <option value="allow">allow</option>
-                <option value="require_approval">require_approval</option>
-                <option value="deny">deny</option>
-              </select>
-              <button id="permSaveBtn" class="btn btn-primary" type="button">Save Rule</button>
-            </div>
-            <div id="permList" class="ops-list"></div>
-          </section>
+        <main class="settings-content">
+          <header class="settings-header">
+            <h2 id="settingsTitle">Profile</h2>
+            <button id="settingsCloseBtn" class="btn btn-ghost">Close</button>
+          </header>
 
-          <section class="ops-section">
-            <h3 class="ops-section-title">RAG Knowledge</h3>
-            <div class="ops-row">
-              <input id="ragPathInput" class="ops-input" type="text" placeholder="Root path inside your user directory" />
-              <input id="ragMaxFilesInput" class="ops-input ops-input-sm" type="number" min="1" max="1000" value="100" />
-              <button id="ragIndexBtn" class="btn btn-primary" type="button">Index</button>
-            </div>
-            <div class="ops-row">
-              <input id="ragQueryInput" class="ops-input" type="text" placeholder="Ask from indexed files" />
-              <input id="ragTopKInput" class="ops-input ops-input-sm" type="number" min="1" max="15" value="5" />
-              <button id="ragQueryBtn" class="btn btn-ghost" type="button">Search</button>
-            </div>
-            <div id="ragResults" class="ops-list"></div>
-          </section>
-
-          <section class="ops-section">
-            <h3 class="ops-section-title">Routines</h3>
-            <div class="ops-stack">
-              <input id="routineNameInput" class="ops-input" type="text" placeholder="Routine name" />
-              <textarea id="routinePromptInput" class="ops-textarea" rows="3" placeholder="Prompt to run"></textarea>
-              <div class="ops-row">
-                <input id="routineIntervalInput" class="ops-input ops-input-sm" type="number" min="5" max="10080" value="60" />
-                <label class="ops-check">
-                  <input id="routineEnabledInput" type="checkbox" checked />
-                  <span>Enabled</span>
-                </label>
-                <button id="routineCreateBtn" class="btn btn-primary" type="button">Create</button>
+          <div id="settingsPanel-profile" class="settings-panel active">
+            <div class="profile-section">
+              <div class="profile-avatar-large"></div>
+              <div class="profile-info">
+                <h3 id="profileNameDisplay">User Name</h3>
+                <p id="profileEmailDisplay">user@example.com</p>
               </div>
             </div>
-            <div id="routineList" class="ops-list"></div>
-          </section>
+          </div>
 
-          <section class="ops-section">
-            <h3 class="ops-section-title">Reminders</h3>
-            <div class="ops-stack">
-              <input id="reminderTitleInput" class="ops-input" type="text" placeholder="Reminder title" />
-              <textarea id="reminderMessageInput" class="ops-textarea" rows="2" placeholder="Reminder message (optional)"></textarea>
-              <div class="ops-row">
-                <input id="reminderDueInput" class="ops-input" type="datetime-local" />
-                <button id="reminderCreateBtn" class="btn btn-primary" type="button">Create</button>
+          <div id="settingsPanel-memory" class="settings-panel">
+            <div class="panel-section">
+              <label class="memory-label" for="memoryPreferences">Assistant Preferences</label>
+              <p class="section-help">Tell the assistant how you want it to behave (e.g., "be concise", "use Python for math").</p>
+              <textarea id="memoryPreferences" class="memory-textarea" rows="5"></textarea>
+            </div>
+            <div class="panel-section">
+              <label class="memory-label" for="memoryNotes">Personal Notes</label>
+              <p class="section-help">Facts the assistant should remember about you.</p>
+              <textarea id="memoryNotes" class="memory-textarea" rows="7"></textarea>
+            </div>
+            <div class="memory-actions">
+              <button id="memoryClearBtn" class="btn btn-ghost" type="button">Clear All</button>
+              <button id="memorySaveBtn" class="btn btn-primary" type="button">Save Changes</button>
+            </div>
+          </div>
+
+          <div id="settingsPanel-security" class="settings-panel">
+            <section class="ops-section">
+              <h3 class="ops-section-title">Tool Permissions</h3>
+              <p class="section-help">Configure which system capabilities JOI can access automatically.</p>
+              
+              <div class="permission-grid">
+                <!-- File System -->
+                <div class="permission-card">
+                  <div class="permission-info">
+                    <span class="permission-name">File System</span>
+                    <span class="permission-desc">Read and write local files</span>
+                  </div>
+                  <select class="perm-select" data-tool="file_system">
+                    <option value="allow">Allow</option>
+                    <option value="require_approval" selected>Ask Every Time</option>
+                    <option value="deny">Deny</option>
+                  </select>
+                </div>
+
+                <!-- Web Browser -->
+                <div class="permission-card">
+                  <div class="permission-info">
+                    <span class="permission-name">Web Browser</span>
+                    <span class="permission-desc">Search and read websites</span>
+                  </div>
+                  <select class="perm-select" data-tool="web_browser">
+                    <option value="allow">Allow</option>
+                    <option value="require_approval" selected>Ask Every Time</option>
+                    <option value="deny">Deny</option>
+                  </select>
+                </div>
+
+                <!-- Terminal -->
+                <div class="permission-card">
+                  <div class="permission-info">
+                    <span class="permission-name">Terminal</span>
+                    <span class="permission-desc">Execute shell commands</span>
+                  </div>
+                  <select class="perm-select" data-tool="terminal">
+                    <option value="allow">Allow</option>
+                    <option value="require_approval" selected>Ask Every Time</option>
+                    <option value="deny">Deny</option>
+                  </select>
+                </div>
+
+                <!-- Clipboard -->
+                <div class="permission-card">
+                  <div class="permission-info">
+                    <span class="permission-name">Clipboard</span>
+                    <span class="permission-desc">Access copy/paste data</span>
+                  </div>
+                  <select class="perm-select" data-tool="clipboard">
+                    <option value="allow">Allow</option>
+                    <option value="require_approval" selected>Ask Every Time</option>
+                    <option value="deny">Deny</option>
+                  </select>
+                </div>
               </div>
-            </div>
-            <div id="reminderList" class="ops-list"></div>
-          </section>
 
-          <section class="ops-section">
-            <h3 class="ops-section-title">Jobs</h3>
-            <div class="ops-stack">
-              <input id="jobTypeInput" class="ops-input" type="text" placeholder="job type (e.g. custom_task)" />
-              <textarea id="jobPayloadInput" class="ops-textarea" rows="3" placeholder='Payload JSON, e.g. {"task":"daily summary"}'></textarea>
-              <div class="ops-row">
-                <input id="jobRunAtInput" class="ops-input" type="datetime-local" />
-                <button id="jobCreateBtn" class="btn btn-primary" type="button">Queue Job</button>
+              <div class="permission-actions">
+                <button id="permSaveAllBtn" class="btn btn-primary" type="button">Save All Permissions</button>
               </div>
-            </div>
-            <div id="jobList" class="ops-list"></div>
-          </section>
+            </section>
+          </div>
 
-          <section class="ops-section ops-section-wide">
-            <div class="panel-header">
-              <h3 class="ops-section-title">Audit Logs</h3>
-              <button id="auditRefreshBtn" class="btn btn-ghost" type="button">Reload</button>
-            </div>
-            <div id="auditList" class="ops-list"></div>
-          </section>
-        </div>
+          <div id="settingsPanel-connectors" class="settings-panel">
+            <section class="ops-section">
+              <h3 class="ops-section-title">Cloud Connectors</h3>
+              <p class="section-help">Sync JOI with your external accounts to manage emails, events, and documents.</p>
+              
+              <div class="permission-grid">
+                <!-- Google Connector -->
+                <div class="permission-card">
+                  <div class="permission-info">
+                    <span class="permission-name">Google Workspace</span>
+                    <span class="permission-desc">Gmail, Calendar, and Drive</span>
+                  </div>
+                  <div class="connector-status" id="googleConnectorStatus">
+                    <span class="status-badge connected">Connected</span>
+                    <button class="btn btn-ghost btn-sm">Disconnect</button>
+                  </div>
+                </div>
+
+                <!-- GitHub (Future) -->
+                <div class="permission-card muted">
+                  <div class="permission-info">
+                    <span class="permission-name">GitHub</span>
+                    <span class="permission-desc">Manage repos and issues</span>
+                  </div>
+                  <button class="btn btn-ghost btn-sm" disabled>Coming Soon</button>
+                </div>
+
+                <!-- Slack (Future) -->
+                <div class="permission-card muted">
+                  <div class="permission-info">
+                    <span class="permission-name">Slack</span>
+                    <span class="permission-desc">Send and read messages</span>
+                  </div>
+                  <button class="btn btn-ghost btn-sm" disabled>Coming Soon</button>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div id="settingsPanel-automation" class="settings-panel">
+            <section class="ops-section">
+              <h3 class="ops-section-title">Routines</h3>
+              <div class="ops-stack">
+                <input id="routineNameInput" class="ops-input" type="text" placeholder="Routine name" />
+                <textarea id="routinePromptInput" class="ops-textarea" rows="3" placeholder="Prompt to run"></textarea>
+                <div class="ops-row">
+                  <input id="routineIntervalInput" class="ops-input ops-input-sm" type="number" min="5" max="10080" value="60" />
+                  <label class="ops-check">
+                    <input id="routineEnabledInput" type="checkbox" checked />
+                    <span>Enabled</span>
+                  </label>
+                  <button id="routineCreateBtn" class="btn btn-primary" type="button">Create</button>
+                </div>
+              </div>
+              <div id="routineList" class="ops-list"></div>
+            </section>
+
+            <section class="ops-section">
+              <h3 class="ops-section-title">Reminders</h3>
+              <div class="ops-stack">
+                <input id="reminderTitleInput" class="ops-input" type="text" placeholder="Reminder title" />
+                <textarea id="reminderMessageInput" class="ops-textarea" rows="2" placeholder="Reminder message (optional)"></textarea>
+                <div class="ops-row">
+                  <input id="reminderDueInput" class="ops-input" type="datetime-local" />
+                  <button id="reminderCreateBtn" class="btn btn-primary" type="button">Create</button>
+                </div>
+              </div>
+              <div id="reminderList" class="ops-list"></div>
+            </section>
+
+            <section class="ops-section">
+              <h3 class="ops-section-title">Jobs</h3>
+              <div class="ops-stack">
+                <input id="jobTypeInput" class="ops-input" type="text" placeholder="job type (e.g. custom_task)" />
+                <textarea id="jobPayloadInput" class="ops-textarea" rows="3" placeholder='Payload JSON, e.g. {"task":"daily summary"}'></textarea>
+                <div class="ops-row">
+                  <input id="jobRunAtInput" class="ops-input" type="datetime-local" />
+                  <button id="jobCreateBtn" class="btn btn-primary" type="button">Queue Job</button>
+                </div>
+              </div>
+              <div id="jobList" class="ops-list"></div>
+            </section>
+          </div>
+
+          <div id="settingsPanel-knowledge" class="settings-panel">
+            <section class="ops-section">
+              <h3 class="ops-section-title">RAG Knowledge Management</h3>
+              <div class="ops-row">
+                <input id="ragPathInput" class="ops-input" type="text" placeholder="Root path inside your user directory" />
+                <input id="ragMaxFilesInput" class="ops-input ops-input-sm" type="number" min="1" max="1000" value="100" />
+                <button id="ragIndexBtn" class="btn btn-primary" type="button">Index Files</button>
+              </div>
+              <div class="ops-row">
+                <input id="ragQueryInput" class="ops-input" type="text" placeholder="Ask from indexed files" />
+                <input id="ragTopKInput" class="ops-input ops-input-sm" type="number" min="1" max="15" value="5" />
+                <button id="ragQueryBtn" class="btn btn-ghost" type="button">Test Search</button>
+              </div>
+              <div id="ragResults" class="ops-list"></div>
+            </section>
+          </div>
+
+          <div id="settingsPanel-audit" class="settings-panel">
+            <section class="ops-section ops-section-wide">
+              <div class="panel-header">
+                <h3 class="ops-section-title">Audit Logs</h3>
+                <div class="workflow-header-actions">
+                  <button id="opsRefreshBtn" class="btn btn-ghost" type="button">Refresh Data</button>
+                  <button id="auditRefreshBtn" class="btn btn-ghost" type="button">Reload Logs</button>
+                </div>
+              </div>
+              <div id="opsStatus" class="ops-status" aria-live="polite"></div>
+              <div id="auditList" class="ops-list"></div>
+            </section>
+          </div>
+        </main>
       </div>
     </div>
 

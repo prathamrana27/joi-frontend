@@ -21,47 +21,15 @@ const elements = {
   googleButtonWrap: document.getElementById("googleButtonWrap"),
   currentUserName: document.getElementById("currentUserName"),
   logoutBtn: document.getElementById("logoutBtn"),
-  memoryBtn: document.getElementById("memoryBtn"),
-  opsBtn: document.getElementById("opsBtn"),
-  memoryModal: document.getElementById("memoryModal"),
-  memoryCloseBtn: document.getElementById("memoryCloseBtn"),
-  memorySaveBtn: document.getElementById("memorySaveBtn"),
-  memoryClearBtn: document.getElementById("memoryClearBtn"),
-  memoryPreferences: document.getElementById("memoryPreferences"),
-  memoryNotes: document.getElementById("memoryNotes"),
-  opsModal: document.getElementById("opsModal"),
-  opsCloseBtn: document.getElementById("opsCloseBtn"),
-  opsRefreshBtn: document.getElementById("opsRefreshBtn"),
-  opsStatus: document.getElementById("opsStatus"),
-  permToolName: document.getElementById("permToolName"),
-  permMode: document.getElementById("permMode"),
-  permSaveBtn: document.getElementById("permSaveBtn"),
-  permList: document.getElementById("permList"),
-  ragPathInput: document.getElementById("ragPathInput"),
-  ragMaxFilesInput: document.getElementById("ragMaxFilesInput"),
-  ragIndexBtn: document.getElementById("ragIndexBtn"),
-  ragQueryInput: document.getElementById("ragQueryInput"),
-  ragTopKInput: document.getElementById("ragTopKInput"),
-  ragQueryBtn: document.getElementById("ragQueryBtn"),
-  ragResults: document.getElementById("ragResults"),
-  routineNameInput: document.getElementById("routineNameInput"),
-  routinePromptInput: document.getElementById("routinePromptInput"),
-  routineIntervalInput: document.getElementById("routineIntervalInput"),
-  routineEnabledInput: document.getElementById("routineEnabledInput"),
-  routineCreateBtn: document.getElementById("routineCreateBtn"),
-  routineList: document.getElementById("routineList"),
-  reminderTitleInput: document.getElementById("reminderTitleInput"),
-  reminderMessageInput: document.getElementById("reminderMessageInput"),
-  reminderDueInput: document.getElementById("reminderDueInput"),
-  reminderCreateBtn: document.getElementById("reminderCreateBtn"),
-  reminderList: document.getElementById("reminderList"),
-  jobTypeInput: document.getElementById("jobTypeInput"),
-  jobPayloadInput: document.getElementById("jobPayloadInput"),
-  jobRunAtInput: document.getElementById("jobRunAtInput"),
-  jobCreateBtn: document.getElementById("jobCreateBtn"),
-  jobList: document.getElementById("jobList"),
-  auditRefreshBtn: document.getElementById("auditRefreshBtn"),
   auditList: document.getElementById("auditList"),
+  permSaveAllBtn: document.getElementById("permSaveAllBtn"),
+  settingsModal: document.getElementById("settingsModal"),
+  settingsCloseBtn: document.getElementById("settingsCloseBtn"),
+  settingsTabs: document.querySelectorAll(".settings-tab"),
+  settingsPanels: document.querySelectorAll(".settings-panel"),
+  settingsTitle: document.getElementById("settingsTitle"),
+  profileNameDisplay: document.getElementById("profileNameDisplay"),
+  profileEmailDisplay: document.getElementById("profileEmailDisplay"),
   approvalList: document.getElementById("approvalList"),
   quickCommandOverlay: document.getElementById("quickCommandOverlay"),
   quickCommandForm: document.getElementById("quickCommandForm"),
@@ -89,7 +57,11 @@ const elements = {
   clearWorkflowBtn: document.getElementById("clearWorkflowBtn"),
   connectionBadge: document.getElementById("connectionBadge"),
   modelSelect: document.getElementById("modelSelect"),
-  buildTag: document.getElementById("buildTag")
+  buildTag: document.getElementById("buildTag"),
+  memoryPreferences: document.getElementById("memoryPreferences"),
+  memoryNotes: document.getElementById("memoryNotes"),
+  memorySaveBtn: document.getElementById("memorySaveBtn"),
+  memoryClearBtn: document.getElementById("memoryClearBtn")
 };
 
 const state = {
@@ -258,22 +230,67 @@ async function fetchMemory() {
   state.memory.notes = String(payload?.memory?.notes || "");
 }
 
-function openMemoryModal() {
-  if (!elements.memoryModal) {
-    return;
+function openSettingsModal(initialTab = "profile") {
+  if (elements.settingsModal) {
+    elements.settingsModal.classList.remove("hidden");
+    elements.settingsModal.classList.add("open");
+    elements.settingsModal.setAttribute("aria-hidden", "false");
+    switchSettingsTab(initialTab);
+    updateProfileDisplay();
   }
+}
+
+function closeSettingsModal() {
+  if (elements.settingsModal) {
+    elements.settingsModal.classList.remove("open");
+    elements.settingsModal.classList.add("hidden");
+    elements.settingsModal.setAttribute("aria-hidden", "true");
+  }
+}
+
+function switchSettingsTab(tabName) {
+  elements.settingsTabs.forEach((btn) => {
+    const isActive = btn.dataset.settingsTab === tabName;
+    btn.classList.toggle("active", isActive);
+  });
+
+  elements.settingsPanels.forEach((panel) => {
+    const isActive = panel.id === `settingsPanel-${tabName}`;
+    panel.classList.toggle("active", isActive);
+  });
+
+  if (elements.settingsTitle) {
+    const tabLabelMap = {
+      profile: "Profile",
+      memory: "Assistant Memory",
+      security: "Security & Tools",
+      automation: "Automations",
+      knowledge: "Knowledge (RAG)",
+      audit: "Audit Logs"
+    };
+    elements.settingsTitle.textContent = tabLabelMap[tabName] || "Settings";
+  }
+}
+
+function updateProfileDisplay() {
+  if (state.auth.user) {
+    if (elements.profileNameDisplay) {
+      elements.profileNameDisplay.textContent = getAuthDisplayName(state.auth.user);
+    }
+    if (elements.profileEmailDisplay) {
+      elements.profileEmailDisplay.textContent = state.auth.user.email || "";
+    }
+  }
+}
+
+function openMemoryModal() {
   elements.memoryPreferences.value = state.memory.preferences || "";
   elements.memoryNotes.value = state.memory.notes || "";
-  elements.memoryModal.classList.add("open");
-  elements.memoryModal.setAttribute("aria-hidden", "false");
+  openSettingsModal("memory");
 }
 
 function closeMemoryModal() {
-  if (!elements.memoryModal) {
-    return;
-  }
-  elements.memoryModal.classList.remove("open");
-  elements.memoryModal.setAttribute("aria-hidden", "true");
+  closeSettingsModal();
 }
 
 async function saveMemory() {
@@ -322,20 +339,12 @@ function setOpsStatus(message, tone = "neutral") {
 }
 
 function openOpsModal() {
-  if (!elements.opsModal) {
-    return;
-  }
-  elements.opsModal.classList.add("open");
-  elements.opsModal.setAttribute("aria-hidden", "false");
+  openSettingsModal("security");
   void refreshOpsData({ showProgress: true, successMessage: "Controls loaded." });
 }
 
 function closeOpsModal() {
-  if (!elements.opsModal) {
-    return;
-  }
-  elements.opsModal.classList.remove("open");
-  elements.opsModal.setAttribute("aria-hidden", "true");
+  closeSettingsModal();
 }
 
 function toIsoOrEmpty(localDateTimeValue) {
@@ -1573,12 +1582,6 @@ function updateBusyState() {
   elements.recordingCancelBtn.disabled = busy;
   elements.recordingConfirmBtn.disabled = busy;
   elements.closeWorkflowBtn.disabled = !conversation || conversation.workflowRunning;
-  if (elements.memoryBtn) {
-    elements.memoryBtn.disabled = !signedIn;
-  }
-  if (elements.opsBtn) {
-    elements.opsBtn.disabled = !signedIn;
-  }
 }
 
 function addWorkflowEvent(type, content) {
@@ -1665,7 +1668,14 @@ function renderHistory() {
     deleteBtn.type = "button";
     deleteBtn.className = "history-delete";
     deleteBtn.title = "Delete session";
-    deleteBtn.textContent = "Delete";
+    deleteBtn.innerHTML = `
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 21 6"></polyline>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+        <line x1="10" y1="11" x2="10" y2="17"></line>
+        <line x1="14" y1="11" x2="14" y2="17"></line>
+      </svg>
+    `;
     deleteBtn.addEventListener("click", (event) => {
       event.stopPropagation();
       void removeConversation(conversation.id);
@@ -1795,7 +1805,7 @@ function renderMessages() {
     welcome.innerHTML = `
       <h2 class="welcome-title">What can I help with?</h2>
       <p class="welcome-subtitle">
-        Welcome to JOI. Ask anything in natural language and I will stream the response in real time.
+        I am JOI, your intelligent system assistant. Ready to help you manage your workspace, automate tasks, and provide real-time insights.
       </p>
       <div class="welcome-hints">
         <span class="welcome-chip">Summarize a topic</span>
@@ -2813,6 +2823,19 @@ function startNewChat() {
     addWorkflowEvent("warning", "Wait for current stream to finish before starting a new chat.");
     return;
   }
+
+  // Find if there's any existing empty conversation to reuse
+  const emptyConv = state.conversations.find((c) => !c.messages || c.messages.length === 0);
+
+  if (emptyConv) {
+    if (state.activeConversationId !== emptyConv.id) {
+      state.activeConversationId = emptyConv.id;
+      saveState();
+      renderAll();
+    }
+    return;
+  }
+
   const conversation = createConversation();
   renderAll();
   addWorkflowEvent("status", `Started new chat (${conversation.id.slice(-8)})`);
@@ -3183,63 +3206,48 @@ function bindEvents() {
     elements.logoutBtn.addEventListener("click", handleLogout);
   }
 
-  if (elements.memoryBtn) {
-    elements.memoryBtn.addEventListener("click", openMemoryModal);
+  if (elements.currentUserName) {
+    elements.currentUserName.onclick = () => openSettingsModal("profile");
   }
-  if (elements.memoryCloseBtn) {
-    elements.memoryCloseBtn.addEventListener("click", closeMemoryModal);
+  if (elements.settingsCloseBtn) {
+    elements.settingsCloseBtn.onclick = () => closeSettingsModal();
   }
-  if (elements.memorySaveBtn) {
-    elements.memorySaveBtn.addEventListener("click", async () => {
-      try {
-        await saveMemory();
-        addWorkflowEvent("status", "Memory saved.");
-        closeMemoryModal();
-      } catch (err) {
-        addWorkflowEvent("warning", err instanceof Error ? err.message : String(err));
+  if (elements.settingsModal) {
+    elements.settingsModal.addEventListener("click", (event) => {
+      if (event.target === elements.settingsModal) {
+        closeSettingsModal();
       }
     });
   }
-  if (elements.memoryClearBtn) {
-    elements.memoryClearBtn.addEventListener("click", async () => {
-      try {
-        await clearMemory();
-        addWorkflowEvent("status", "Memory cleared.");
-      } catch (err) {
-        addWorkflowEvent("warning", err instanceof Error ? err.message : String(err));
-      }
+  elements.settingsTabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      switchSettingsTab(btn.dataset.settingsTab);
     });
-  }
+  });
 
-  if (elements.opsBtn) {
-    elements.opsBtn.addEventListener("click", openOpsModal);
-  }
-  if (elements.opsCloseBtn) {
-    elements.opsCloseBtn.addEventListener("click", closeOpsModal);
-  }
-  if (elements.opsModal) {
-    elements.opsModal.addEventListener("click", (event) => {
-      if (event.target === elements.opsModal) {
-        closeOpsModal();
-      }
-    });
+  if (elements.logoutBtn) {
+    elements.logoutBtn.addEventListener("click", handleLogout);
   }
   if (elements.opsRefreshBtn) {
     elements.opsRefreshBtn.addEventListener("click", () => {
       void refreshOpsData({ showProgress: true });
     });
   }
-  if (elements.permSaveBtn) {
-    elements.permSaveBtn.addEventListener("click", async () => {
-      try {
-        const toolName = String(elements.permToolName?.value || "").trim();
-        const mode = String(elements.permMode?.value || "allow").trim();
-        await savePermissionRule(toolName, mode);
-        renderPermissionsList();
-        setOpsStatus(`Saved permission for ${toolName}.`, "success");
-      } catch (err) {
-        setOpsStatus(err instanceof Error ? err.message : String(err), "error");
+  if (elements.permSaveAllBtn) {
+    elements.permSaveAllBtn.addEventListener("click", async () => {
+      const selects = document.querySelectorAll(".perm-select");
+      let successCount = 0;
+      for (const sel of selects) {
+        const tool = sel.dataset.tool;
+        const mode = sel.value;
+        try {
+          await savePermissionRule(tool, mode);
+          successCount++;
+        } catch (err) {
+          console.error(`Failed to save ${tool}:`, err);
+        }
       }
+      setOpsStatus(`Successfully updated ${successCount} tool permissions.`, "success");
     });
   }
   if (elements.ragIndexBtn) {
@@ -3353,7 +3361,10 @@ function bindEvents() {
     addWorkflowEvent("status", "Attachment picker is not configured yet.");
   });
 
-  elements.newChatBtn.addEventListener("click", startNewChat);
+  elements.newChatBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    startNewChat();
+  });
   elements.ttsToggleBtn.addEventListener("click", toggleTTS);
   elements.micBtn.addEventListener("click", () => {
     void toggleVoiceRecording();
@@ -3416,6 +3427,7 @@ async function bootstrap() {
   updateAuthUI();
   renderAll();
   void initDesktopMeta();
+  closeSettingsModal();
 }
 
 void bootstrap();
