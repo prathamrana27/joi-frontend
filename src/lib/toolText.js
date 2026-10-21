@@ -29,6 +29,12 @@ function endOfJsonObject(text, start) {
   return text.length; // unterminated (still streaming): hide the rest
 }
 
+// "window_list" -> "Window list", for showing tool names to people.
+export function toolLabel(tool) {
+  const s = String(tool || "").replace(/_/g, " ").trim();
+  return s ? s[0].toUpperCase() + s.slice(1) : "Tool";
+}
+
 export function stripToolCalls(text) {
   let s = String(text || "");
   let idx = s.indexOf(MARKER);

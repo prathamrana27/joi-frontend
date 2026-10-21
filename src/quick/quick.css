@@ -1,0 +1,280 @@
+/* ---------- Quick assistant popup (#/quick) ---------- */
+
+/* The popup window is transparent; only the rounded panel is drawn. */
+html.quick-mode,
+html.quick-mode body {
+  background: transparent !important;
+}
+
+.quick-shell {
+  height: 100vh;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.quick-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 28px;
+  overflow: hidden;
+  background:
+    radial-gradient(360px 240px at 85% -10%, rgba(217, 119, 87, 0.16), transparent 70%),
+    linear-gradient(180deg, #fbf8f3 0%, #f5efe5 100%);
+  border: 1px solid rgba(23, 21, 15, 0.1);
+  box-shadow: 0 2px 6px rgba(23, 21, 15, 0.08), 0 18px 40px rgba(23, 21, 15, 0.22);
+  animation: quick-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes quick-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+  }
+}
+
+.quick-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 12px 4px 18px;
+  -webkit-app-region: drag; /* drag the popup by its top bar */
+}
+
+.quick-bar button {
+  -webkit-app-region: no-drag;
+}
+
+.quick-bubble {
+  position: relative;
+  margin-top: 4px;
+  padding: 12px 15px;
+  border-radius: 18px;
+  background: #fff;
+  border: 1px solid rgba(23, 21, 15, 0.08);
+  box-shadow: 0 6px 18px rgba(23, 21, 15, 0.06);
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: #17150f;
+}
+
+.quick-bubble::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  background: #fff;
+  border-left: 1px solid rgba(23, 21, 15, 0.08);
+  border-top: 1px solid rgba(23, 21, 15, 0.08);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* ---------- Mascot ---------- */
+
+.mascot {
+  display: inline-block;
+}
+
+.mascot svg {
+  overflow: visible;
+}
+
+.mascot .m-figure,
+.mascot .m-eye,
+.mascot .m-arm,
+.mascot .m-antenna-glow,
+.mascot .m-antenna-dot {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.mascot .m-figure {
+  transform-origin: 50% 100%;
+  animation: m-bob 3.2s ease-in-out infinite;
+}
+
+.mascot .m-eye {
+  animation: m-blink 4.6s infinite;
+}
+
+.mascot .m-antenna-glow {
+  animation: m-glow 2.4s ease-in-out infinite;
+}
+
+.mascot .m-mouth,
+.mascot .m-thoughts,
+.mascot .m-waves {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.mascot-idle .m-mouth-smile,
+.mascot-listening .m-mouth-o,
+.mascot-thinking .m-mouth-o,
+.mascot-talking .m-mouth-talk,
+.mascot-happy .m-mouth-happy {
+  opacity: 1;
+}
+
+/* listening: perked up, antenna pulsing, sound waves */
+.mascot-listening .m-figure {
+  animation: m-perk 1.2s ease-in-out infinite;
+}
+
+.mascot-listening .m-antenna-glow {
+  animation: m-glow 0.8s ease-in-out infinite;
+}
+
+.mascot-listening .m-waves {
+  opacity: 1;
+  animation: m-waves 1s ease-in-out infinite;
+}
+
+/* thinking: eyes look up, thought dots appear in turn */
+.mascot-thinking .m-eyes {
+  transform: translate(3px, -4px);
+  transition: transform 0.3s;
+}
+
+.mascot-thinking .m-thoughts {
+  opacity: 1;
+}
+
+.mascot-thinking .m-thoughts circle {
+  animation: m-thought 1.2s ease-in-out infinite;
+}
+
+.mascot-thinking .m-thoughts circle:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.mascot-thinking .m-thoughts circle:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* talking: mouth opens and closes */
+.mascot-talking .m-mouth-talk {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: m-talk 0.32s ease-in-out infinite alternate;
+}
+
+/* happy: a little hop and waving arms */
+.mascot-happy .m-figure {
+  animation: m-hop 0.7s cubic-bezier(0.3, 1.6, 0.5, 1) 2;
+}
+
+.mascot-happy .m-arm-left {
+  animation: m-wave-left 0.5s ease-in-out 3;
+}
+
+.mascot-happy .m-arm-right {
+  animation: m-wave-right 0.5s ease-in-out 3;
+}
+
+@keyframes m-bob {
+  0%,
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  50% {
+    transform: translateY(-4px) scale(1.01, 0.99);
+  }
+}
+
+@keyframes m-perk {
+  0%,
+  100% {
+    transform: translateY(-3px) scale(1.02);
+  }
+  50% {
+    transform: translateY(-6px) scale(1.04, 1.01);
+  }
+}
+
+@keyframes m-hop {
+  0%,
+  100% {
+    transform: translateY(0) scale(1, 1);
+  }
+  30% {
+    transform: translateY(2px) scale(1.06, 0.92);
+  }
+  60% {
+    transform: translateY(-14px) scale(0.96, 1.05);
+  }
+}
+
+@keyframes m-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes m-glow {
+  0%,
+  100% {
+    transform: scale(0.85);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+}
+
+@keyframes m-waves {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes m-thought {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
+@keyframes m-talk {
+  from {
+    transform: scaleY(0.35);
+  }
+  to {
+    transform: scaleY(1.15);
+  }
+}
+
+@keyframes m-wave-left {
+  50% {
+    transform: rotate(-28deg);
+  }
+}
+
+@keyframes m-wave-right {
+  50% {
+    transform: rotate(28deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mascot * {
+    animation: none !important;
+  }
+}

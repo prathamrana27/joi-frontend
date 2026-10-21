@@ -7,6 +7,7 @@ const { app, BrowserWindow, ipcMain, shell, globalShortcut, Notification, dialog
 const { startEmbeddedDb } = require("./embeddedDb.cjs");
 const aiEngine = require("./aiEngine.cjs");
 const { startAutoUpdate } = require("./updater.cjs");
+const quick = require("./quickWindow.cjs");
 
 const OAUTH_HOST = "127.0.0.1";
 const OAUTH_PORT = 53682;
@@ -814,13 +815,35 @@ function focusAppWindow() {
   } catch (_e) { /* ignore */ }
 }
 
-// Show/hide JOI from anywhere (global shortcut).
-function toggleMainWindow() {
-  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()) {
-    mainWindow.hide();
-  } else {
-    focusAppWindow();
-  }
+// ---- Quick assistant popup (bottom-right corner) ----
+// Set once the AI engine and model are confirmed ready (or not needed); until then the
+// shortcut opens the full app, which shows the first-run setup.
+let engineReady = false;
+
+const quickOpts = () => ({ loadRenderer, icon: ICON_PATH });
+
+// Signed in = the agent knows a token (live window or the persisted copy).
+function hasSignedInUser() {
+  return Boolean(notifyToken || loadPersistedToken());
+}
+
+function canUseQuickAssistant() {
+  return engineReady && hasSignedInUser();
+}
+
+// Desktop shortcut, Ctrl+Alt+J and the tray icon all come here.
+function summonAssistant() {
+  if (canUseQuickAssistant()) quick.toggleQuickWindow(quickOpts());
+  else focusAppWindow();
+}
+
+function openFullApp(conversationId) {
+  quick.hideQuickWindow();
+  focusAppWindow();
+  if (!conversationId || !mainWindow || mainWindow.isDestroyed()) return;
+  const send = () => emitDesktopEvent("open_session", { id: conversationId });
+  if (mainWindow.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
+  else send();
 }
 
 function createTray() {
@@ -828,15 +851,16 @@ function createTray() {
   try {
     const image = nativeImage.createFromPath(TRAY_ICON_PATH);
     tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
-    tray.setToolTip("JOI — Ctrl+Alt+J to open");
+    tray.setToolTip("JOI: Ctrl+Alt+J to ask");
     const menu = Menu.buildFromTemplate([
-      { label: "Open JOI        Ctrl+Alt+J", click: () => focusAppWindow() },
+      { label: "Ask JOI        Ctrl+Alt+J", click: () => summonAssistant() },
+      { label: "Open full app", click: () => openFullApp() },
       { type: "separator" },
       { label: "Quit JOI", click: () => { appIsQuitting = true; app.quit(); } },
     ]);
     tray.setContextMenu(menu);
-    tray.on("click", () => showMainWindow());
-    tray.on("double-click", () => showMainWindow());
+    tray.on("click", () => summonAssistant());
+    tray.on("double-click", () => openFullApp());
   } catch (_e) { /* tray optional */ }
 }
 
@@ -857,6 +881,17 @@ function startAgent() {
 // The React UI is built by Vite into ./dist (same folder) for both dev and packaged.
 function resolveRendererIndex() {
   return path.join(__dirname, "../dist/index.html");
+}
+
+// Load the React app into a window, optionally at a hash route ("/quick" = the popup).
+function loadRenderer(win, route = "") {
+  // Dev convenience: set JOI_UI_DEV_URL=http://localhost:5173 for hot-reload.
+  const devUrl = process.env.JOI_UI_DEV_URL;
+  if (!app.isPackaged && devUrl) {
+    win.loadURL(route ? `${devUrl}#${route}` : devUrl);
+  } else {
+    win.loadFile(resolveRendererIndex(), route ? { hash: route } : undefined);
+  }
 }
 
 const BRAND_BG = "#faf7f2";
@@ -906,7 +941,7 @@ function closeSplashWindow() {
   splashWindow = null;
 }
 
-function createMainWindow({ forceShow = false } = {}) {
+function createMainWindow({ forceShow = false, show = true } = {}) {
   mainWindow = new BrowserWindow({
     width: 1460,
     height: 920,
@@ -927,19 +962,14 @@ function createMainWindow({ forceShow = false } = {}) {
 
   mainWindow.once("ready-to-show", () => {
     closeSplashWindow();
-    if (forceShow || !startHidden) {
+    // show=false: created in the background (the quick popup opens instead).
+    if (forceShow || (show && !startHidden)) {
       mainWindow.show();
       mainWindow.focus();
     }
   });
 
-  // Dev convenience: set JOI_UI_DEV_URL=http://localhost:5173 for hot-reload.
-  const devUrl = process.env.JOI_UI_DEV_URL;
-  if (!app.isPackaged && devUrl) {
-    mainWindow.loadURL(devUrl);
-  } else {
-    mainWindow.loadFile(resolveRendererIndex());
-  }
+  loadRenderer(mainWindow);
 
   // Pick up the signed-in user's token for the 24/7 notification socket.
   mainWindow.webContents.on("did-finish-load", () => { syncAgentToken(); });
@@ -966,8 +996,8 @@ function emitDesktopEvent(name, payload = {}) {
 function registerGlobalHotkeys() {
   try {
     globalShortcut.unregisterAll();
-    // Open / hide JOI from anywhere while it's running (it lives in the tray after login).
-    globalShortcut.register("CommandOrControl+Alt+J", () => toggleMainWindow());
+    // Open / hide the quick assistant from anywhere (JOI lives in the tray after login).
+    globalShortcut.register("CommandOrControl+Alt+J", () => summonAssistant());
     globalShortcut.register("CommandOrControl+Space", () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         if (!mainWindow.isVisible()) {
@@ -1053,7 +1083,7 @@ function handleDeepLink(url) {
 app.on("second-instance", (_event, argv) => {
   const link = findDeepLink(argv);
   if (link) handleDeepLink(link);
-  else focusAppWindow();
+  else summonAssistant(); // desktop / Start-menu shortcut while JOI is running
 });
 
 // Register joi:// so the browser can hand the user back to the app after sign-in.
@@ -1105,7 +1135,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("engine-status", async () => {
     if (!usesLocalModel()) return { ready: true, engine: "remote" };
     try {
-      return await aiEngine.engineStatus(app, localModelName());
+      const status = await aiEngine.engineStatus(app, localModelName());
+      if (status.ready) engineReady = true;
+      return status;
     } catch (err) {
       return { ready: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -1117,10 +1149,20 @@ app.whenReady().then(async () => {
     };
     try {
       await aiEngine.runSetup(app, localModelName(), send);
+      engineReady = true;
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+  // Quick assistant popup → main process.
+  ipcMain.handle("quick-hide", () => {
+    quick.hideQuickWindow();
+    return true;
+  });
+  ipcMain.handle("quick-open-main", (_event, conversationId) => {
+    openFullApp(typeof conversationId === "string" ? conversationId : "");
+    return true;
   });
   ipcMain.handle("active-app-context", async () => {
     if (process.platform === "win32") {
@@ -1143,10 +1185,25 @@ app.whenReady().then(async () => {
     return;
   }
 
-  createMainWindow();
+  // Signed in and the AI engine ready: launch straight into the small corner popup, with
+  // the full window loaded hidden in the background. Otherwise open the full app, which
+  // handles sign-in and first-run setup.
+  try {
+    engineReady = !usesLocalModel() || (await aiEngine.engineStatus(app, localModelName())).ready;
+  } catch (_e) {
+    engineReady = false;
+  }
+  const launchIntoQuick = !startHidden && canUseQuickAssistant() && !findDeepLink(process.argv);
+  createMainWindow({ show: !launchIntoQuick });
   registerGlobalHotkeys();
   startAgent();
   startAutoUpdate({ app, notify: showAgentNotification });
+  if (launchIntoQuick) {
+    closeSplashWindow();
+    quick.showQuickWindow(quickOpts());
+  } else {
+    quick.createQuickWindow(quickOpts()); // prewarm so Ctrl+Alt+J opens instantly
+  }
 
   // Cold-started by a joi:// link (app wasn't running when the browser handed off).
   const launchLink = findDeepLink(process.argv);
@@ -1200,6 +1257,7 @@ app.on("before-quit", (event) => {
   shutdownInProgress = true;
   appIsQuitting = true;
   event.preventDefault();
+  quick.destroyQuickWindow();
   unloadLocalModel()
     .catch(() => {})
     .then(() => stopBackendProcess())

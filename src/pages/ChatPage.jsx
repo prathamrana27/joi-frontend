@@ -19,7 +19,7 @@ import Settings from "../components/Settings.jsx";
 import ConfirmDialog from "../components/ui/ConfirmDialog.jsx";
 import Markdown from "../components/ui/Markdown.jsx";
 import { LOGO_ICON } from "../assets/logos.js";
-import { stripToolCalls } from "../lib/toolText.js";
+import { stripToolCalls, toolLabel } from "../lib/toolText.js";
 import Logo from "../components/ui/Logo.jsx";
 import { useNotifications, Toasts, NotificationBell } from "../components/Notifications.jsx";
 
@@ -77,11 +77,6 @@ function approvalSummary(args) {
   return s.length > 400 ? `${s.slice(0, 400)}…` : s;
 }
 
-// "window_list" -> "Window list", for showing tool names to people.
-function toolLabel(tool) {
-  const s = String(tool || "").replace(/_/g, " ").trim();
-  return s ? s[0].toUpperCase() + s.slice(1) : "Tool";
-}
 
 function ApprovalCard({ approval, disabled, onDecide }) {
   const label = toolLabel(approval.tool);
@@ -179,6 +174,15 @@ export default function ChatPage() {
       setWorkflow([]);
     } catch { /* ignore */ }
   }
+
+  // "Open full app" from the quick popup: show that conversation here.
+  useEffect(() => {
+    return window.joiDesktop?.onDesktopEvent?.((evt) => {
+      if (evt?.name !== "open_session" || !evt.payload?.id) return;
+      api.listSessions(token).then((r) => setSessions(r.sessions || [])).catch(() => {});
+      openSession(evt.payload.id);
+    });
+  }, [token]);
 
   function startNewChat() {
     abortRef.current?.abort();
