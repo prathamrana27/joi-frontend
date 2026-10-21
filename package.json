@@ -1,7 +1,7 @@
 {
   "name": "joi-desktop",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "JOI desktop assistant (Electron + React UI + bundled backend)",
   "author": "JOI Team",
   "main": "electron/main.cjs",
@@ -37,6 +37,7 @@
     "eslint": "^9.37.0",
     "globals": "^16.4.0",
     "postcss": "^8.4.49",
+    "rcedit": "5.0.2",
     "sharp": "^0.35.5",
     "tailwindcss": "^3.4.17",
     "vite": "^5.4.11",
@@ -93,7 +94,7 @@
       }
     ],
     "win": {
-      "icon": "assets/icon.png",
+      "icon": "assets/icon.ico",
       "signAndEditExecutable": false,
       "target": [
         {
@@ -119,6 +120,7 @@
         "provider": "generic",
         "url": "https://joi-release.s3.ap-southeast-2.amazonaws.com/"
       }
-    ]
+    ],
+    "afterPack": "build/afterPack.cjs"
   }
 }

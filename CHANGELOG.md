@@ -4,6 +4,13 @@ Every release of the JOI desktop app, newest first. The website shows the same n
 https://joi-landing-one.vercel.app/changelog (from `Joi-Landing/src/content/releases.ts`).
 Keep both in sync; `docs/RELEASING.md` has the steps.
 
+## 1.2.1 — 22 October 2026
+**JOI's own icon everywhere**
+
+### Fixed
+- The desktop shortcut, taskbar and Start menu showed a generic icon instead of JOI's logo.
+- Task Manager and file properties said "Electron" instead of "JOI".
+
 ## 1.2.0 — 22 October 2026
 **JOI pops up right where you need it**
 

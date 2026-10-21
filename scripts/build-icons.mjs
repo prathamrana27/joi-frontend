@@ -25,3 +25,31 @@ for (const [rel, size] of outputs) {
 }
 await writeFile(path.join(root, "public/favicon.svg"), svg);
 console.log("  public/favicon.svg");
+
+// Windows icon (.ico) with every size the shell uses: desktop, taskbar, Start, Alt+Tab.
+// Stamped into JOI.exe by electron-builder, so shortcuts show JOI's logo, not Electron's.
+const icoSizes = [16, 24, 32, 48, 64, 128, 256];
+const pngs = await Promise.all(
+  icoSizes.map((s) => sharp(svg, { density: 384 }).resize(s, s).png().toBuffer())
+);
+const header = Buffer.alloc(6);
+header.writeUInt16LE(0, 0); // reserved
+header.writeUInt16LE(1, 2); // type: icon
+header.writeUInt16LE(pngs.length, 4);
+let offset = 6 + 16 * pngs.length;
+const entries = pngs.map((png, i) => {
+  const e = Buffer.alloc(16);
+  const s = icoSizes[i];
+  e.writeUInt8(s >= 256 ? 0 : s, 0); // width (0 means 256)
+  e.writeUInt8(s >= 256 ? 0 : s, 1); // height
+  e.writeUInt8(0, 2); // palette colours
+  e.writeUInt8(0, 3); // reserved
+  e.writeUInt16LE(1, 4); // colour planes
+  e.writeUInt16LE(32, 6); // bits per pixel
+  e.writeUInt32LE(png.length, 8);
+  e.writeUInt32LE(offset, 12);
+  offset += png.length;
+  return e;
+});
+await writeFile(path.join(root, "assets/icon.ico"), Buffer.concat([header, ...entries, ...pngs]));
+console.log(`  assets/icon.ico (${icoSizes.join(", ")}px)`);
