@@ -1,65 +1,124 @@
 {
-  "name": "joi-electron-frontend",
+  "name": "joi-desktop",
   "private": true,
-  "version": "1.0.0",
-  "description": "JOI desktop assistant with bundled backend runtime",
+  "version": "1.1.0",
+  "description": "JOI desktop assistant (Electron + React UI + bundled backend)",
   "author": "JOI Team",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
-    "dev": "electron .",
-    "start": "electron .",
-    "lint": "eslint electron renderer eslint.config.js --report-unused-disable-directives --max-warnings 0",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "icons": "node scripts/build-icons.mjs",
+    "electron": "electron .",
+    "start": "npm run build && electron .",
+    "app:dev": "concurrently -k -n ui,app -c magenta,cyan \"vite\" \"wait-on http://localhost:5173 && cross-env JOI_UI_DEV_URL=http://localhost:5173 electron .\"",
+    "lint": "eslint electron src eslint.config.js --report-unused-disable-directives --max-warnings 0",
     "build:backend": "powershell -ExecutionPolicy Bypass -File ..\\joi-backend\\build_backend.ps1 -Clean",
-    "dist:dir": "npm run build:backend && set CSC_IDENTITY_AUTO_DISCOVERY=false&&set ELECTRON_BUILDER_CACHE=ebcache&&electron-builder --win dir",
-    "dist:win": "npm run build:backend && set CSC_IDENTITY_AUTO_DISCOVERY=false&&set ELECTRON_BUILDER_CACHE=ebcache&&electron-builder --win portable"
+    "dist:dir": "npm run build && npm run build:backend && set CSC_IDENTITY_AUTO_DISCOVERY=false&&set ELECTRON_BUILDER_CACHE=ebcache&&electron-builder --win dir",
+    "dist:win": "npm run build && npm run build:backend && set CSC_IDENTITY_AUTO_DISCOVERY=false&&set ELECTRON_BUILDER_CACHE=ebcache&&electron-builder --win nsis"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.10",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^10.0.6",
+    "cross-env": "^10.1.0",
     "electron": "^35.0.0",
     "electron-builder": "^26.0.12",
     "eslint": "^9.37.0",
-    "globals": "^16.4.0"
+    "globals": "^16.4.0",
+    "postcss": "^8.4.49",
+    "sharp": "^0.35.5",
+    "tailwindcss": "^3.4.17",
+    "vite": "^5.4.11",
+    "wait-on": "^9.5.1"
   },
   "build": {
     "appId": "com.joi.desktop",
-    "productName": "JOI Desktop",
+    "productName": "JOI",
     "asar": true,
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
+    "files": [
+      "**/*",
+      "!src{,/**/*}",
+      "!public{,/**/*}",
+      "!scripts{,/**/*}",
+      "!vendor{,/**/*}",
+      "!venv{,/**/*}",
+      "!release{,/**/*}",
+      "!ebcache{,/**/*}",
+      "!.cache-electron-builder{,/**/*}",
+      "!build{,/**/*}",
+      "!assets/legacy{,/**/*}",
+      "!README.md",
+      "!index.html",
+      "!*.config.js",
+      "!.git*"
+    ],
+    "protocols": [
+      {
+        "name": "JOI",
+        "schemes": [
+          "joi"
+        ]
+      }
+    ],
     "extraResources": [
       {
         "from": "../joi-backend/dist/joi-backend",
         "to": "backend",
         "filter": [
           "**/*",
-          "!.env.example"
+          "!**/.env",
+          "!**/.env.*",
+          "!**/credentials.json",
+          "!**/*.pickle"
         ]
       },
       {
-        "from": "../joi-backend/dotenv-example",
-        "to": "backend/env-template.txt"
+        "from": "vendor/mongodb",
+        "to": "mongodb"
       }
     ],
     "win": {
-      "icon": "renderer/assets/joi-logo-icon.png",
+      "icon": "assets/icon.png",
       "signAndEditExecutable": false,
       "target": [
         {
-          "target": "portable",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
+      "createStartMenuShortcut": true,
+      "shortcutName": "JOI",
+      "runAfterFinish": true,
+      "include": "build/installer.nsh"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://joi-release.s3.ap-southeast-2.amazonaws.com/"
+      }
+    ]
   }
 }

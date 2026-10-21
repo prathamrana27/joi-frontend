@@ -11,11 +11,12 @@ const nodeGlobals = Object.fromEntries(
 export default [
   { ignores: ['node_modules', 'dist', 'venv'] },
   {
-    files: ['renderer/**/*.js'],
+    files: ['src/**/*.{js,jsx}'],
     languageOptions: {
       ecmaVersion: 2022,
       globals: browserGlobals,
-      sourceType: 'module'
+      sourceType: 'module',
+      parserOptions: { ecmaFeatures: { jsx: true } }
     },
     rules: {
       ...js.configs.recommended.rules,

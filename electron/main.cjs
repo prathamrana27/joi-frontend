@@ -3,7 +3,10 @@ const fs = require("fs");
 const http = require("http");
 const nodeCrypto = require("crypto");
 const { execFile, spawn } = require("child_process");
-const { app, BrowserWindow, ipcMain, shell, globalShortcut, Notification, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, globalShortcut, Notification, dialog, Tray, Menu, nativeImage, safeStorage } = require("electron");
+const { startEmbeddedDb } = require("./embeddedDb.cjs");
+const aiEngine = require("./aiEngine.cjs");
+const { startAutoUpdate } = require("./updater.cjs");
 
 const OAUTH_HOST = "127.0.0.1";
 const OAUTH_PORT = 53682;
@@ -20,8 +23,10 @@ let mainWindow = null;
 let backendProcess = null;
 let backendStartupPromise = null;
 let backendRecentLogs = [];
+let backendEnvPath = "";
 let appIsQuitting = false;
 let shutdownInProgress = false;
+let embeddedDb = null;
 
 function toBase64Url(buffer) {
   return Buffer.from(buffer)
@@ -39,24 +44,42 @@ function sha256UrlSafe(value) {
   return toBase64Url(nodeCrypto.createHash("sha256").update(value, "utf8").digest());
 }
 
-function sendOAuthHtml(res, title, message) {
+// Inline brand mark (same geometry as src/assets/logo-mark.svg) for pages served outside the app.
+const BRAND_MARK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="56" height="56"><defs><linearGradient id="t" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ec9a76"/><stop offset=".55" stop-color="#d97757"/><stop offset="1" stop-color="#b4502f"/></linearGradient></defs><rect width="512" height="512" rx="120" fill="url(#t)"/><circle cx="300" cy="130" r="40" fill="#fdf6ee"/><path d="M300 208V318C300 384 262 408 206 396" fill="none" stroke="#fdf6ee" stroke-width="66" stroke-linecap="round"/></svg>`;
+
+// Branded result page for the system-browser OAuth step. On success it deep-links back
+// into the app via joi:// (browsers can't close a tab they didn't open, so we hand off).
+function sendOAuthHtml(res, title, message, ok = false) {
   res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+  const returnBlock = ok
+    ? `<a class="btn" href="joi://auth/done">Return to JOI</a>
+       <p class="hint">Not switching automatically? Click the button, or just close this tab.</p>
+       <script>setTimeout(function(){ location.href = "joi://auth/done"; }, 500);
+               setTimeout(function(){ try { window.close(); } catch (e) {} }, 1500);</script>`
+    : `<p class="hint">You can close this tab and try again from JOI.</p>`;
   res.end(`<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>${title}</title>
+    <title>${title} · JOI</title>
     <style>
-      body { font-family: Segoe UI, Arial, sans-serif; margin: 40px; background: #111827; color: #f3f4f6; }
-      .card { max-width: 560px; margin: 0 auto; padding: 24px; border-radius: 14px; background: #1f2937; border: 1px solid #374151; }
-      h1 { margin: 0 0 10px; font-size: 22px; }
-      p { margin: 0; color: #d1d5db; line-height: 1.45; }
+      body { margin:0; min-height:100vh; display:grid; place-items:center; font-family: Inter, "Segoe UI", system-ui, sans-serif;
+             background: radial-gradient(900px 600px at 85% -10%, rgba(217,119,87,.14), transparent 60%), #faf7f2; color:#17150f; }
+      .card { width:min(440px, 90vw); padding:40px 36px; border-radius:26px; background:rgba(255,255,255,.8);
+              border:1px solid rgba(23,21,15,.1); box-shadow:0 24px 50px -20px rgba(28,26,23,.22); text-align:center; }
+      h1 { margin:20px 0 8px; font-family: Georgia, serif; font-size:28px; letter-spacing:-.01em; }
+      p { margin:0; color:#595247; line-height:1.55; }
+      .btn { display:inline-block; margin-top:24px; padding:12px 26px; border-radius:999px; color:#fff; text-decoration:none; font-weight:600;
+             background:linear-gradient(135deg,#e68a67,#d97757 55%,#c45f3d); box-shadow:0 10px 30px -10px rgba(217,119,87,.55); }
+      .hint { margin-top:14px; font-size:13px; color:#857d70; }
     </style>
   </head>
   <body>
     <div class="card">
+      ${BRAND_MARK_SVG}
       <h1>${title}</h1>
       <p>${message}</p>
+      ${returnBlock}
     </div>
   </body>
 </html>`);
@@ -133,8 +156,8 @@ function runDesktopGoogleOAuth(clientId) {
         if (authError) {
           sendOAuthHtml(
             res,
-            "Google Sign-In Failed",
-            "Sign-in was cancelled or denied. You can close this tab and try again."
+            "Sign-in cancelled",
+            "Google sign-in was cancelled or denied."
           );
           settle(new Error(`Google OAuth failed: ${authError}`));
           return;
@@ -143,8 +166,8 @@ function runDesktopGoogleOAuth(clientId) {
         if (!code || callbackState !== state) {
           sendOAuthHtml(
             res,
-            "Google Sign-In Failed",
-            "Invalid callback data received. You can close this tab and retry."
+            "Sign-in didn't complete",
+            "The sign-in response was invalid or expired."
           );
           settle(new Error("Invalid Google OAuth callback state or code."));
           return;
@@ -152,9 +175,12 @@ function runDesktopGoogleOAuth(clientId) {
 
         sendOAuthHtml(
           res,
-          "Google Sign-In Complete",
-          "You can close this tab and return to JOI Desktop."
+          "You're signed in",
+          "Taking you back to JOI…",
+          true
         );
+        // Bring the app forward ourselves too, in case the browser blocks the joi:// hand-off.
+        focusAppWindow();
 
         settle(null, {
           code,
@@ -270,6 +296,52 @@ function parseEnvFileValue(filePath, key) {
   return "";
 }
 
+function upsertEnvValue(filePath, key, value) {
+  // Insert or replace a KEY=value line in a .env file, creating the file if needed.
+  try {
+    let lines = [];
+    if (fs.existsSync(filePath)) {
+      lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+    }
+    let replaced = false;
+    const newLine = `${key}=${value}`;
+    for (let i = 0; i < lines.length; i += 1) {
+      const trimmed = String(lines[i] || "").trim();
+      if (trimmed.startsWith("#")) {
+        continue;
+      }
+      const sep = trimmed.indexOf("=");
+      if (sep > 0 && trimmed.slice(0, sep).trim() === key) {
+        lines[i] = newLine;
+        replaced = true;
+        break;
+      }
+    }
+    if (!replaced) {
+      if (lines.length && String(lines[lines.length - 1]).trim() !== "") {
+        lines.push("");
+      }
+      lines.push(newLine);
+    }
+    fs.writeFileSync(filePath, lines.join("\n"), "utf8");
+    return true;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function ensureRuntimeJwtSecret(envPath) {
+  // Each install gets its own strong signing secret so tokens can never be
+  // forged with a shared/default value. Generated once, then persisted.
+  const WEAK = new Set(["", "dev-only-change-me", "change-me", "secret"]);
+  const current = parseEnvFileValue(envPath, "AUTH_JWT_SECRET");
+  if (!WEAK.has(String(current).trim()) && String(current).trim().length >= 32) {
+    return;
+  }
+  const generated = nodeCrypto.randomBytes(48).toString("hex");
+  upsertEnvValue(envPath, "AUTH_JWT_SECRET", generated);
+}
+
 function isTemplateEnvValue(value) {
   const normalized = String(value || "").trim().toLowerCase();
   if (!normalized) {
@@ -303,7 +375,23 @@ function envFileHasUsableApiKey(envPath) {
   return !isTemplateEnvValue(parseEnvFileValue(envPath, REQUIRED_BACKEND_KEY));
 }
 
+function resolveLlmProvider(envPath) {
+  const fromProcess = String(process.env.JOI_LLM_PROVIDER || "").trim().toLowerCase();
+  if (fromProcess) {
+    return fromProcess;
+  }
+  const fromFile = String(parseEnvFileValue(envPath, "JOI_LLM_PROVIDER") || "").trim().toLowerCase();
+  return fromFile || "openai";
+}
+
 function assertBackendConfigReady(envPath, envExamplePath = "") {
+  // Local / self-hosted providers (Ollama, OpenAI-compatible) do not need an
+  // OpenAI key, so only enforce it when OpenAI is actually the chat provider.
+  const provider = resolveLlmProvider(envPath);
+  if (provider !== "openai") {
+    return;
+  }
+
   const apiKey = resolveUsableBackendApiKey(envPath);
   if (apiKey) {
     return;
@@ -385,6 +473,11 @@ function preparePackagedBackendRuntime(packagedBackendDir) {
   const userCreds = path.join(backendToolsDataDir, "credentials.json");
   tryCopyFileIfMissing(packagedCreds, userCreds);
 
+  // Guarantee a per-install signing secret on the writable runtime env file.
+  if (selectedEnvPath === userEnvPath) {
+    ensureRuntimeJwtSecret(userEnvPath);
+  }
+
   return {
     envPath: selectedEnvPath,
     envExamplePath: selectedEnvExamplePath,
@@ -415,9 +508,11 @@ function resolveBackendLaunchConfig() {
     };
   }
 
-  // In local development, prefer already-built backend executable if present.
+  // In local development run the Python source, so code changes take effect. The built
+  // executable is a frozen snapshot from the last `npm run dist:win`; use it only when
+  // testing the packaged backend on purpose (JOI_USE_BUILT_BACKEND=1).
   const builtExe = path.join(builtBackendDir, exeName);
-  if (fs.existsSync(builtExe)) {
+  if (process.env.JOI_USE_BUILT_BACKEND === "1" && fs.existsSync(builtExe)) {
     return {
       command: builtExe,
       args: [],
@@ -496,6 +591,7 @@ async function ensureBackendRunning() {
 
   backendStartupPromise = (async () => {
     const launch = resolveBackendLaunchConfig();
+    backendEnvPath = launch.envPath;
     assertBackendConfigReady(launch.envPath, launch.envExamplePath);
     backendRecentLogs = [];
     const env = {
@@ -504,6 +600,15 @@ async function ensureBackendRunning() {
       JOI_ENV_PATH: launch.envPath,
       JOI_GOOGLE_TOOLS_DIR: launch.googleToolsDir
     };
+
+    // Installed copies run their own private database; developers keep their own server
+    // unless they opt in with JOI_EMBEDDED_DB=1.
+    if (app.isPackaged || process.env.JOI_EMBEDDED_DB === "1") {
+      embeddedDb = await startEmbeddedDb(app);
+      if (embeddedDb) {
+        env.MONGO_URI = embeddedDb.uri;
+      }
+    }
 
     backendProcess = spawn(launch.command, launch.args, {
       cwd: launch.cwd,
@@ -554,15 +659,263 @@ async function ensureBackendRunning() {
   }
 }
 
-function createMainWindow() {
-  const appIconPath = path.join(__dirname, "../renderer/assets/joi-logo-icon.png");
+// ---------------------------------------------------------------------------
+//  24/7 Notification Agent (runs in the main process, survives window close)
+// ---------------------------------------------------------------------------
+let tray = null;
+let notifyWs = null;
+let notifyToken = null;
+let notifyReconnectTimer = null;
+let notifyHeartbeat = null;
+let tokenSyncTimer = null;
+const ICON_PATH = path.join(__dirname, "../assets/icon.png");
+const TRAY_ICON_PATH = path.join(__dirname, "../assets/tray.png"); // tray@2x.png auto-picked on HiDPI
+// Launched by Windows at login (setLoginItemSettings) → stay in the tray, don't pop a window.
+const startHidden = process.argv.includes("--hidden");
+
+function tokenFilePath() {
+  return path.join(app.getPath("userData"), "agent-token.bin");
+}
+
+function persistToken(token) {
+  try {
+    const buf = safeStorage && safeStorage.isEncryptionAvailable()
+      ? safeStorage.encryptString(token)
+      : Buffer.from(token, "utf8");
+    fs.writeFileSync(tokenFilePath(), buf);
+  } catch (_e) { /* best-effort */ }
+}
+
+function loadPersistedToken() {
+  try {
+    const p = tokenFilePath();
+    if (!fs.existsSync(p)) return "";
+    const buf = fs.readFileSync(p);
+    if (safeStorage && safeStorage.isEncryptionAvailable()) {
+      try { return safeStorage.decryptString(buf); } catch (_e) { return ""; }
+    }
+    return buf.toString("utf8");
+  } catch (_e) { return ""; }
+}
+
+function clearPersistedToken() {
+  try { fs.existsSync(tokenFilePath()) && fs.unlinkSync(tokenFilePath()); } catch (_e) { /* ignore */ }
+}
+
+// Read the auth token from whichever renderer is loaded (no renderer changes needed).
+async function readTokenFromWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return "";
+  try {
+    const token = await mainWindow.webContents.executeJavaScript(`(() => {
+      try {
+        const a = localStorage.getItem('joi.auth.v1');
+        if (a) { const o = JSON.parse(a); if (o && o.access_token) return o.access_token; }
+      } catch (e) {}
+      try {
+        const b = localStorage.getItem('joi_auth_state_v1');
+        if (b) { const o = JSON.parse(b); if (o && (o.accessToken || o.access_token)) return o.accessToken || o.access_token; }
+      } catch (e) {}
+      return "";
+    })()`, true);
+    return String(token || "");
+  } catch (_e) { return ""; }
+}
+
+function showAgentNotification(title, body) {
+  try {
+    if (!Notification.isSupported()) return;
+    const n = new Notification({ title: title || "JOI", body: body || "", icon: ICON_PATH });
+    n.on("click", () => showMainWindow());
+    n.show();
+  } catch (_e) { /* ignore */ }
+}
+
+function disconnectNotifySocket() {
+  if (notifyReconnectTimer) { clearTimeout(notifyReconnectTimer); notifyReconnectTimer = null; }
+  if (notifyHeartbeat) { clearInterval(notifyHeartbeat); notifyHeartbeat = null; }
+  if (notifyWs) {
+    try { notifyWs.onclose = null; notifyWs.close(); } catch (_e) { /* ignore */ }
+    notifyWs = null;
+  }
+}
+
+function connectNotifySocket(token) {
+  if (!token) return;
+  if (notifyWs && notifyToken === token) return; // already connected with this token
+  disconnectNotifySocket();
+  notifyToken = token;
+
+  const url = `ws://${BACKEND_HOST}:${BACKEND_PORT}/ws/notifications?token=${encodeURIComponent(token)}`;
+  let ws;
+  try {
+    ws = new WebSocket(url); // Node 22 global WebSocket (Electron main)
+  } catch (_e) {
+    notifyReconnectTimer = setTimeout(() => connectNotifySocket(notifyToken), 5000);
+    return;
+  }
+  notifyWs = ws;
+
+  ws.addEventListener("open", () => {
+    notifyHeartbeat = setInterval(() => { try { ws.send("ping"); } catch (_e) { /* ignore */ } }, 30000);
+  });
+  ws.addEventListener("message", (ev) => {
+    let d; try { d = JSON.parse(ev.data); } catch (_e) { return; }
+    if (d && d.type === "notification") showAgentNotification(d.title, d.body);
+  });
+  ws.addEventListener("close", () => {
+    if (notifyHeartbeat) { clearInterval(notifyHeartbeat); notifyHeartbeat = null; }
+    if (notifyToken) notifyReconnectTimer = setTimeout(() => connectNotifySocket(notifyToken), 3000);
+  });
+  ws.addEventListener("error", () => { try { ws.close(); } catch (_e) { /* ignore */ } });
+}
+
+// Keep the agent's token in sync with the signed-in user.
+async function syncAgentToken() {
+  const fromWindow = await readTokenFromWindow();
+  if (fromWindow) {
+    if (fromWindow !== notifyToken) {
+      persistToken(fromWindow);
+      connectNotifySocket(fromWindow);
+    }
+    return;
+  }
+  // No token in the window. If a window is open, the user is signed out → stop.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    clearPersistedToken();
+    disconnectNotifySocket();
+    notifyToken = null;
+  }
+  // If no window (background autostart), keep the persisted-token connection alive.
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createMainWindow({ forceShow: true });
+    registerGlobalHotkeys();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  mainWindow.focus();
+}
+
+// Windows won't let a background app steal focus with focus() alone; briefly going
+// always-on-top is the standard, reliable way to bring the window to the front.
+function focusAppWindow() {
+  showMainWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.focus();
+    app.focus({ steal: true });
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setAlwaysOnTop(false);
+    }, 300);
+  } catch (_e) { /* ignore */ }
+}
+
+// Show/hide JOI from anywhere (global shortcut).
+function toggleMainWindow() {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()) {
+    mainWindow.hide();
+  } else {
+    focusAppWindow();
+  }
+}
+
+function createTray() {
+  if (tray) return;
+  try {
+    const image = nativeImage.createFromPath(TRAY_ICON_PATH);
+    tray = new Tray(image.isEmpty() ? nativeImage.createEmpty() : image);
+    tray.setToolTip("JOI — Ctrl+Alt+J to open");
+    const menu = Menu.buildFromTemplate([
+      { label: "Open JOI        Ctrl+Alt+J", click: () => focusAppWindow() },
+      { type: "separator" },
+      { label: "Quit JOI", click: () => { appIsQuitting = true; app.quit(); } },
+    ]);
+    tray.setContextMenu(menu);
+    tray.on("click", () => showMainWindow());
+    tray.on("double-click", () => showMainWindow());
+  } catch (_e) { /* tray optional */ }
+}
+
+function startAgent() {
+  createTray();
+  // Only the installed app should auto-start; in dev this would register the bare electron.exe.
+  if (app.isPackaged) {
+    try { app.setLoginItemSettings({ openAtLogin: true, args: ["--hidden"] }); } catch (_e) { /* ignore */ }
+  }
+  // Connect immediately from a persisted token (covers autostart before the user signs in again).
+  const persisted = loadPersistedToken();
+  if (persisted) connectNotifySocket(persisted);
+  // Poll the window for the current token (login/logout) every 15s.
+  if (tokenSyncTimer) clearInterval(tokenSyncTimer);
+  tokenSyncTimer = setInterval(() => { syncAgentToken(); }, 15000);
+}
+
+// The React UI is built by Vite into ./dist (same folder) for both dev and packaged.
+function resolveRendererIndex() {
+  return path.join(__dirname, "../dist/index.html");
+}
+
+const BRAND_BG = "#faf7f2";
+
+// ---- Splash: shown instantly while the backend boots (can take several seconds) ----
+let splashWindow = null;
+
+function createSplashWindow() {
+  if (startHidden) return; // autostart at login: stay quiet in the tray
+  splashWindow = new BrowserWindow({
+    width: 380,
+    height: 300,
+    frame: false,
+    resizable: false,
+    movable: true,
+    center: true,
+    skipTaskbar: false,
+    show: false,
+    backgroundColor: BRAND_BG,
+    icon: ICON_PATH,
+    title: "JOI",
+    webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+    html,body{margin:0;height:100%;background:${BRAND_BG};font-family:Inter,"Segoe UI",system-ui,sans-serif;color:#17150f;-webkit-user-select:none;-webkit-app-region:drag}
+    .wrap{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+          background:radial-gradient(420px 260px at 80% -10%,rgba(217,119,87,.16),transparent 70%)}
+    .mark{filter:drop-shadow(0 12px 24px rgba(196,95,61,.35));animation:float 2.4s ease-in-out infinite}
+    @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
+    .name{font-family:Georgia,serif;font-size:26px;font-weight:600;letter-spacing:-.01em}
+    .status{font-size:13px;color:#857d70;display:flex;align-items:center;gap:8px}
+    .dots span{display:inline-block;width:5px;height:5px;margin:0 2px;border-radius:50%;background:#d97757;animation:b 1.2s infinite}
+    .dots span:nth-child(2){animation-delay:.15s}.dots span:nth-child(3){animation-delay:.3s}
+    @keyframes b{0%,80%,100%{opacity:.25;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
+  </style></head><body><div class="wrap">
+    <div class="mark">${BRAND_MARK_SVG.replace('width="56" height="56"', 'width="72" height="72"')}</div>
+    <div class="name">JOI</div>
+    <div class="status">Starting up <span class="dots"><span></span><span></span><span></span></span></div>
+  </div></body></html>`;
+  splashWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  splashWindow.once("ready-to-show", () => splashWindow && splashWindow.show());
+  splashWindow.on("closed", () => { splashWindow = null; });
+}
+
+function closeSplashWindow() {
+  if (splashWindow && !splashWindow.isDestroyed()) splashWindow.destroy();
+  splashWindow = null;
+}
+
+function createMainWindow({ forceShow = false } = {}) {
   mainWindow = new BrowserWindow({
     width: 1460,
     height: 920,
     minWidth: 1100,
     minHeight: 700,
-    backgroundColor: "#0b1020",
-    icon: appIconPath,
+    title: "JOI",
+    show: false, // reveal on ready-to-show so there's no unstyled flash
+    backgroundColor: BRAND_BG,
+    icon: ICON_PATH,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -572,8 +925,32 @@ function createMainWindow() {
     }
   });
 
-  mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+  mainWindow.once("ready-to-show", () => {
+    closeSplashWindow();
+    if (forceShow || !startHidden) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
 
+  // Dev convenience: set JOI_UI_DEV_URL=http://localhost:5173 for hot-reload.
+  const devUrl = process.env.JOI_UI_DEV_URL;
+  if (!app.isPackaged && devUrl) {
+    mainWindow.loadURL(devUrl);
+  } else {
+    mainWindow.loadFile(resolveRendererIndex());
+  }
+
+  // Pick up the signed-in user's token for the 24/7 notification socket.
+  mainWindow.webContents.on("did-finish-load", () => { syncAgentToken(); });
+
+  // Close to tray instead of quitting, so notifications keep working in background.
+  mainWindow.on("close", (event) => {
+    if (!appIsQuitting) {
+      event.preventDefault();
+      mainWindow.hide();
+    }
+  });
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -589,6 +966,8 @@ function emitDesktopEvent(name, payload = {}) {
 function registerGlobalHotkeys() {
   try {
     globalShortcut.unregisterAll();
+    // Open / hide JOI from anywhere while it's running (it lives in the tray after login).
+    globalShortcut.register("CommandOrControl+Alt+J", () => toggleMainWindow());
     globalShortcut.register("CommandOrControl+Space", () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         if (!mainWindow.isVisible()) {
@@ -653,10 +1032,46 @@ function getWindowsActiveAppContext() {
   });
 }
 
+// ---- Single instance + joi:// deep links ----
+// Only one JOI may run. A second launch (shortcut, Start menu, or a joi:// link from the
+// browser after OAuth) hands its arguments to the running instance and exits.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+function findDeepLink(argv) {
+  return (argv || []).find((a) => typeof a === "string" && a.startsWith("joi://")) || "";
+}
+
+function handleDeepLink(url) {
+  if (!url) return;
+  focusAppWindow();
+  emitDesktopEvent("deep_link", { url });
+}
+
+app.on("second-instance", (_event, argv) => {
+  const link = findDeepLink(argv);
+  if (link) handleDeepLink(link);
+  else focusAppWindow();
+});
+
+// Register joi:// so the browser can hand the user back to the app after sign-in.
+try {
+  if (process.defaultApp && process.argv.length >= 2) {
+    // Dev: electron.exe <app path>
+    app.setAsDefaultProtocolClient("joi", process.execPath, [path.resolve(process.argv[1])]);
+  } else {
+    app.setAsDefaultProtocolClient("joi");
+  }
+} catch (_e) { /* non-fatal */ }
+
 app.whenReady().then(async () => {
+  if (!gotSingleInstanceLock) return;
   ipcMain.handle("app-version", () => app.getVersion());
   ipcMain.handle("open-external", async (_event, url) => {
-    if (!url || typeof url !== "string") {
+    // Only web links: never let the renderer launch local files/apps via the shell.
+    if (!url || typeof url !== "string" || !/^https?:\/\//i.test(url)) {
       return false;
     }
     await shell.openExternal(url);
@@ -686,6 +1101,27 @@ app.whenReady().then(async () => {
       return false;
     }
   });
+  // First-run setup of the on-device AI engine and model (only for the local provider).
+  ipcMain.handle("engine-status", async () => {
+    if (!usesLocalModel()) return { ready: true, engine: "remote" };
+    try {
+      return await aiEngine.engineStatus(app, localModelName());
+    } catch (err) {
+      return { ready: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle("engine-setup", async (event) => {
+    if (!usesLocalModel()) return { ok: true };
+    const send = (payload) => {
+      if (!event.sender.isDestroyed()) event.sender.send("engine-progress", payload);
+    };
+    try {
+      await aiEngine.runSetup(app, localModelName(), send);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
   ipcMain.handle("active-app-context", async () => {
     if (process.platform === "win32") {
       return getWindowsActiveAppContext();
@@ -693,9 +1129,12 @@ app.whenReady().then(async () => {
     return { app: "", title: "", pid: 0 };
   });
 
+  createSplashWindow();
+
   try {
     await ensureBackendRunning();
   } catch (err) {
+    closeSplashWindow();
     const reason = err instanceof Error ? err.message : String(err);
     const tail = getBackendLogTail();
     const detail = tail ? `\n\nRecent backend logs:\n${tail}` : "";
@@ -706,6 +1145,12 @@ app.whenReady().then(async () => {
 
   createMainWindow();
   registerGlobalHotkeys();
+  startAgent();
+  startAutoUpdate({ app, notify: showAgentNotification });
+
+  // Cold-started by a joi:// link (app wasn't running when the browser handed off).
+  const launchLink = findDeepLink(process.argv);
+  if (launchLink) handleDeepLink(launchLink);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -715,6 +1160,39 @@ app.whenReady().then(async () => {
   });
 });
 
+function backendSetting(key) {
+  return String(process.env[key] || parseEnvFileValue(backendEnvPath, key) || "").trim();
+}
+
+function usesLocalModel() {
+  return backendSetting("JOI_LLM_PROVIDER").toLowerCase() === "ollama";
+}
+
+function localModelName() {
+  return backendSetting("JOI_OLLAMA_MODEL") || "qwen2.5:3b";
+}
+
+// The backend keeps the local model loaded while JOI runs (no cold starts). The backend
+// is force-killed on quit, so its own shutdown hook can't run — free the GPU from here.
+async function unloadLocalModel() {
+  const read = backendSetting;
+  if (!usesLocalModel()) return;
+  const base = (read("JOI_OLLAMA_BASE_URL") || "http://127.0.0.1:11434").replace(/\/+$/, "").replace(/\/v1$/, "");
+  const model = localModelName();
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 3000);
+  try {
+    await fetch(`${base}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, keep_alive: 0 }),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 app.on("before-quit", (event) => {
   if (shutdownInProgress) {
     return;
@@ -722,7 +1200,13 @@ app.on("before-quit", (event) => {
   shutdownInProgress = true;
   appIsQuitting = true;
   event.preventDefault();
-  stopBackendProcess()
+  unloadLocalModel()
+    .catch(() => {})
+    .then(() => stopBackendProcess())
+    .catch(() => {})
+    .then(() => embeddedDb && embeddedDb.stop())
+    .catch(() => {})
+    .then(() => aiEngine.stopEngine())
     .catch(() => {})
     .finally(() => {
       app.removeAllListeners("before-quit");
@@ -733,10 +1217,12 @@ app.on("before-quit", (event) => {
 app.on("will-quit", () => {
   appIsQuitting = true;
   globalShortcut.unregisterAll();
+  if (tokenSyncTimer) clearInterval(tokenSyncTimer);
+  disconnectNotifySocket();
+  try { tray && tray.destroy(); } catch (_e) { /* ignore */ }
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+  // Intentionally do NOT quit: the tray agent keeps running so 24/7 notifications
+  // continue even when the window is closed. Quit only via the tray's "Quit JOI".
 });

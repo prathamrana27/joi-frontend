@@ -41,3 +41,7 @@ Thumbs.db
 
 # Tooling and runtime artifacts
 *.tsbuildinfo
+
+# Vendored third-party binaries (rebuild with scripts/vendor-mongodb.ps1)
+vendor/
+.cache-electron-builder/

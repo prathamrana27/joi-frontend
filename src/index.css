@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    font-family: "Inter", system-ui, sans-serif;
+    color: #17150f;
+    background:
+      radial-gradient(900px 600px at 88% -8%, rgba(217, 119, 87, 0.1), transparent 60%),
+      radial-gradient(800px 600px at -6% 108%, rgba(92, 111, 90, 0.08), transparent 60%),
+      linear-gradient(180deg, #faf7f2 0%, #f6f1e8 100%);
+    background-attachment: fixed;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: rgba(217, 119, 87, 0.22);
+  }
+  /* slim warm scrollbars */
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(28, 26, 23, 0.14);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(28, 26, 23, 0.26);
+    background-clip: content-box;
+  }
+}
+
+/* Plain CSS (no @apply of custom utilities) so it never breaks on config reloads. */
+.card {
+  border-radius: 18px;
+  border: 1px solid rgba(23, 21, 15, 0.1);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 1px 2px rgba(28, 26, 23, 0.04), 0 10px 30px -14px rgba(28, 26, 23, 0.14);
+  backdrop-filter: blur(4px);
+}
+.hairline {
+  border-color: rgba(23, 21, 15, 0.1);
+}
+
+/* Guaranteed-readable text colors — plain rules placed AFTER Tailwind utilities so
+   they win over the opacity-variable color utilities that render faint in some
+   browser/cache states. Solid hex values, no --tw-text-opacity dependency. */
+.text-ink {
+  color: #17150f;
+}
+.text-ink-soft {
+  color: #36312a;
+}
+.text-ink-muted {
+  color: #595247;
+}
+.text-ink-faint {
+  color: #857d70;
+}
