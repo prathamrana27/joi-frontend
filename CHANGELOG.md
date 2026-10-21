@@ -4,6 +4,21 @@ Every release of the JOI desktop app, newest first. The website shows the same n
 https://joi-landing-one.vercel.app/changelog (from `Joi-Landing/src/content/releases.ts`).
 Keep both in sync; `docs/RELEASING.md` has the steps.
 
+## 1.2.0 — 22 October 2026
+**JOI pops up right where you need it**
+
+### New
+- Quick assistant: the JOI shortcut, Ctrl + Alt + J and the tray icon open a small popup in
+  the bottom-right corner instead of the full window.
+- JOI's mascot: an animated character that listens, thinks, talks and celebrates.
+- Talk to JOI: tap the mic and ask; spoken questions get spoken answers.
+- Approve or deny actions right inside the popup.
+- "Open full app" from the popup continues the same conversation in the big window.
+
+### Improved
+- When you're signed in, launching JOI goes straight to the popup.
+- Tray icon: click for the popup, double-click (or the menu) for the full app.
+
 ## 1.1.0 — 21 October 2026
 **Your phone, a one-step setup, and a lot more trust**
 

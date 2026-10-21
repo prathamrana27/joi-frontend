@@ -1,7 +1,7 @@
 {
   "name": "joi-desktop",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "JOI desktop assistant (Electron + React UI + bundled backend)",
   "author": "JOI Team",
   "main": "electron/main.cjs",
