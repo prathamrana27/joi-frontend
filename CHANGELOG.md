@@ -4,6 +4,13 @@ Every release of the JOI desktop app, newest first. The website shows the same n
 https://joi-landing-one.vercel.app/changelog (from `Joi-Landing/src/content/releases.ts`).
 Keep both in sync; `docs/RELEASING.md` has the steps.
 
+## 1.3.3 — 22 October 2026
+**Slack connect, finished**
+
+### Fixed
+- Connecting Slack now completes: Slack hands you back to JOI through a secure (https) address,
+  which Slack requires.
+
 ## 1.3.2 — 22 October 2026
 **Connect Slack from the installed app**
 

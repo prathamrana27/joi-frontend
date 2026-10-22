@@ -429,6 +429,12 @@ const SHIPPED_ENV_KEYS = [
   "SLACK_CLIENT_ID", "SLACK_REDIRECT_URI", "SLACK_EXCHANGE_URL",
 ];
 
+// Old shipped defaults that later versions replace (a user's own value is never touched).
+// Slack only accepts https redirects, so 1.3.3 moved its callback to JOI's Slack helper.
+const RETIRED_ENV_VALUES = {
+  SLACK_REDIRECT_URI: "http://127.0.0.1:8000/integrations/slack/callback",
+};
+
 function preparePackagedBackendRuntime(packagedBackendDir) {
   const backendDataDir = path.join(app.getPath("userData"), "backend");
   const backendToolsDataDir = path.join(backendDataDir, "tools");
@@ -454,7 +460,7 @@ function preparePackagedBackendRuntime(packagedBackendDir) {
   for (const key of SHIPPED_ENV_KEYS) {
     const shipped = String(parseEnvFileValue(packagedEnvExample, key) || "").trim();
     const current = String(parseEnvFileValue(userEnvPath, key) || "").trim();
-    if (shipped && !current) upsertEnvValue(userEnvPath, key, shipped);
+    if (shipped && (!current || RETIRED_ENV_VALUES[key] === current)) upsertEnvValue(userEnvPath, key, shipped);
   }
 
   // If runtime .env is still a template, replace it with packaged runtime env when available.
