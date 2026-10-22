@@ -4,6 +4,13 @@ Every release of the JOI desktop app, newest first. The website shows the same n
 https://joi-landing-one.vercel.app/changelog (from `Joi-Landing/src/content/releases.ts`).
 Keep both in sync; `docs/RELEASING.md` has the steps.
 
+## 1.3.2 — 22 October 2026
+**Connect Slack from the installed app**
+
+### Fixed
+- Slack couldn't be connected in installed copies of JOI ("Not configured on the server yet").
+  Connecting now works for everyone, and Slack's private app key never leaves JOI's servers.
+
 ## 1.3.1 — 22 October 2026
 **Google sign-in and Google connections work in the installed app**
 
