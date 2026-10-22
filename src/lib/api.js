@@ -98,6 +98,11 @@ export const api = {
   getMemory: (t) => parse2(`${BACKEND_BASE_URL}/memory`, t),
   saveMemory: (t, body) => parse2(`${BACKEND_BASE_URL}/memory`, t, "PUT", body),
   clearMemory: (t) => parse2(`${BACKEND_BASE_URL}/memory`, t, "DELETE"),
+  memorySuggestions: (t) => parse2(`${BACKEND_BASE_URL}/memory/suggestions`, t),
+  decideMemorySuggestion: (t, id, decision) =>
+    parse2(`${BACKEND_BASE_URL}/memory/suggestions/${encodeURIComponent(id)}/${decision}`, t, "POST"),
+
+  undo: (t, id) => parse2(`${BACKEND_BASE_URL}/undo/${encodeURIComponent(id)}`, t, "POST"),
 
   // ---- Permissions & approvals ----
   getPermissions: (t) => parse2(`${BACKEND_BASE_URL}/permissions`, t),
@@ -139,6 +144,8 @@ export const api = {
   telegramNewCode: (t) => parse2(`${BACKEND_BASE_URL}/integrations/telegram/pairing`, t, "POST"),
 
   // ---- Daily Briefing ----
+  getWakeWord: (t) => parse2(`${BACKEND_BASE_URL}/wake-word`, t),
+  setWakeWord: (t, enabled) => parse2(`${BACKEND_BASE_URL}/wake-word`, t, "PUT", { enabled }),
   getBriefing: (t) => parse2(`${BACKEND_BASE_URL}/briefing`, t),
   setBriefing: (t, body) => parse2(`${BACKEND_BASE_URL}/briefing`, t, "PUT", body),
   runBriefing: (t) => parse2(`${BACKEND_BASE_URL}/briefing/run`, t, "POST"),

@@ -65,14 +65,14 @@ function createQuickWindow({ loadRenderer, icon }) {
   return quickWindow;
 }
 
-function showQuickWindow(opts) {
+function showQuickWindow(opts, info = {}) {
   const win = createQuickWindow(opts);
   const { x, y } = cornerPosition();
   win.setBounds({ x, y, width: WIDTH, height: HEIGHT });
   const reveal = () => {
     win.show();
     win.focus();
-    win.webContents.send("quick-shown");
+    win.webContents.send("quick-shown", info);
   };
   if (win.webContents.isLoading()) win.webContents.once("did-finish-load", reveal);
   else reveal();

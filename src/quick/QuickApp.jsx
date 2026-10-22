@@ -5,6 +5,9 @@ import Markdown from "../components/ui/Markdown.jsx";
 import { stripToolCalls, toolLabel } from "../lib/toolText.js";
 import { IconSend, IconMic, IconStop, IconClose, IconNewChat } from "../components/ui/Icons.jsx";
 import Mascot from "./Mascot.jsx";
+import { speakText } from "../lib/speech.js";
+import MemorySuggestionBar from "../components/MemorySuggestionBar.jsx";
+import UndoChip from "../components/UndoChip.jsx";
 import "./quick.css";
 
 // The quick assistant: JOI in a small corner popup. Ask by typing or by voice; spoken
@@ -39,6 +42,7 @@ export default function QuickApp() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [turn, setTurn] = useState(0);
   const [step, setStep] = useState(null);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -48,14 +52,16 @@ export default function QuickApp() {
   const scrollRef = useRef(null);
   const recRef = useRef(null);
   const chunksRef = useRef([]);
-  const audioRef = useRef(null);
 
   // Shown again from the shortcut: pick up a sign-in that happened in the full app.
   useEffect(() => {
-    return window.joiDesktop?.onQuickShown?.(() => {
+    return window.joiDesktop?.onQuickShown?.((info) => {
       const stored = loadAuth()?.access_token || null;
       if (stored !== token) window.location.reload();
-      else setTimeout(() => inputRef.current?.focus(), 60);
+      else if (info.listen) {
+        // Woken by "Hey JOI": listen for the request right away, stop when they go quiet.
+        if (!recRef.current || recRef.current.state === "inactive") wakeRef.current();
+      } else setTimeout(() => inputRef.current?.focus(), 60);
     });
   }, [token]);
 
@@ -84,18 +90,7 @@ export default function QuickApp() {
       return c;
     });
 
-  async function speak(text) {
-    const clean = stripToolCalls(text).replace(/[*_`#>]/g, "").trim();
-    if (!clean) return;
-    try {
-      const blob = await api.speak(token, clean.slice(0, 1500));
-      audioRef.current?.pause();
-      audioRef.current = new Audio(URL.createObjectURL(blob));
-      audioRef.current.play().catch(() => {});
-    } catch {
-      /* no voice provider configured: the text answer is still shown */
-    }
-  }
+  const speak = (text) => speakText(token, text);
 
   async function streamInto(ai, start, { voice = false } = {}) {
     setBusy(true);
@@ -115,6 +110,8 @@ export default function QuickApp() {
           } else if (event === "workflow_step_completed") {
             setStep(null);
             patch(ai, (m) => ({ ...m, content: m.content + "\n\n" }));
+          } else if (event === "undo_available") {
+            patch(ai, (m) => ({ ...m, undo: { ...data, at: Date.now() } }));
           } else if (event === "workflow_step_requires_approval") {
             setStep(null);
             patch(ai, (m) => ({
@@ -128,6 +125,7 @@ export default function QuickApp() {
       patch(ai, (m) => ({ ...m, content: m.content || `Sorry, something went wrong: ${err.message}` }));
     } finally {
       setBusy(false);
+      setTurn((t) => t + 1);
       setStep(null);
       setHappy(true);
       setTimeout(() => setHappy(false), 1800);
@@ -170,7 +168,47 @@ export default function QuickApp() {
     await streamInto(ai, (opts) => api.resumeChat({ token, conversationId, approvalId: approval.id, ...opts }));
   }
 
-  async function toggleRecording() {
+  // The quick-shown listener is registered once; this keeps it calling the current render.
+  const wakeRef = useRef(null);
+  wakeRef.current = () => toggleRecording({ auto: true });
+
+  // Hands-free recording: a short chime, then stop ~1.4 s after the user stops talking
+  // (or after 6 s of nothing, or 15 s in total).
+  function stopOnSilence(stream, rec) {
+    const ctx = new AudioContext();
+    const chime = ctx.createOscillator();
+    const gain = ctx.createGain();
+    chime.frequency.value = 880;
+    gain.gain.setValueAtTime(0.08, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+    chime.connect(gain).connect(ctx.destination);
+    chime.start();
+    chime.stop(ctx.currentTime + 0.2);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    const started = Date.now();
+    let heard = false;
+    let lastLoud = Date.now();
+    const timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(buf);
+      const rms = Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length);
+      const now = Date.now();
+      if (rms > 0.02) {
+        heard = true;
+        lastLoud = now;
+      }
+      const done = heard ? now - lastLoud > 1400 : now - started > 6000;
+      if (done || now - started > 15000 || rec.state === "inactive") {
+        clearInterval(timer);
+        ctx.close();
+        if (rec.state !== "inactive") rec.stop();
+      }
+    }, 100);
+  }
+
+  async function toggleRecording({ auto = false } = {}) {
     if (recording) {
       recRef.current?.stop();
       return;
@@ -178,6 +216,7 @@ export default function QuickApp() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const rec = new MediaRecorder(stream);
+      if (auto) stopOnSilence(stream, rec);
       chunksRef.current = [];
       rec.ondataavailable = (e) => e.data.size && chunksRef.current.push(e.data);
       rec.onstop = async () => {
@@ -329,6 +368,7 @@ export default function QuickApp() {
                       </div>
                     )}
                     {m.approval && <QuickApproval approval={m.approval} disabled={busy} onDecide={(d) => decide(i, d)} />}
+                    {m.undo && <UndoChip token={token} undo={m.undo} compact />}
                     {!stripToolCalls(m.content) && !m.approval && busy && i === messages.length - 1 && (
                       <span className="inline-flex gap-1 px-1 py-2">
                         <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-clay/60 [animation-delay:-0.2s]" />
@@ -345,6 +385,7 @@ export default function QuickApp() {
 
         {/* Input */}
         <div className="shrink-0 px-3 pb-3">
+          <MemorySuggestionBar token={token} turn={turn} compact />
           <div className="flex items-center gap-1.5 rounded-full border border-ink/12 bg-white/95 p-1.5 pl-4 shadow-soft focus-within:border-clay/50">
             <input
               ref={inputRef}
@@ -361,7 +402,7 @@ export default function QuickApp() {
               className="min-w-0 flex-1 bg-transparent py-1.5 text-[0.92rem] text-ink outline-none placeholder:text-ink-faint"
             />
             <button
-              onClick={toggleRecording}
+              onClick={() => toggleRecording()}
               disabled={!token || transcribing || busy}
               title={recording ? "Stop" : "Speak"}
               className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition ${

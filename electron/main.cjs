@@ -762,6 +762,7 @@ function connectNotifySocket(token) {
   ws.addEventListener("message", (ev) => {
     let d; try { d = JSON.parse(ev.data); } catch (_e) { return; }
     if (d && d.type === "notification") showAgentNotification(d.title, d.body);
+    else if (d && d.type === "wake") wakeAssistant();
   });
   ws.addEventListener("close", () => {
     if (notifyHeartbeat) { clearInterval(notifyHeartbeat); notifyHeartbeat = null; }
@@ -834,6 +835,12 @@ function canUseQuickAssistant() {
 // Desktop shortcut, Ctrl+Alt+J and the tray icon all come here.
 function summonAssistant() {
   if (canUseQuickAssistant()) quick.toggleQuickWindow(quickOpts());
+  else focusAppWindow();
+}
+
+// "Hey JOI" (backend wake_word.py): open the popup already listening for the request.
+function wakeAssistant() {
+  if (canUseQuickAssistant()) quick.showQuickWindow(quickOpts(), { listen: true });
   else focusAppWindow();
 }
 

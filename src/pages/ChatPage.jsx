@@ -20,6 +20,9 @@ import ConfirmDialog from "../components/ui/ConfirmDialog.jsx";
 import Markdown from "../components/ui/Markdown.jsx";
 import { LOGO_ICON } from "../assets/logos.js";
 import { stripToolCalls, toolLabel } from "../lib/toolText.js";
+import { speakText } from "../lib/speech.js";
+import MemorySuggestionBar from "../components/MemorySuggestionBar.jsx";
+import UndoChip from "../components/UndoChip.jsx";
 import Logo from "../components/ui/Logo.jsx";
 import { useNotifications, Toasts, NotificationBell } from "../components/Notifications.jsx";
 
@@ -127,6 +130,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [turn, setTurn] = useState(0); // bumps after each answer (memory suggestions)
   const [workflow, setWorkflow] = useState([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -139,7 +143,6 @@ export default function ChatPage() {
   const abortRef = useRef(null);
   const recRef = useRef(null);
   const chunksRef = useRef([]);
-  const audioRef = useRef(null);
   const ttsOnRef = useRef(false);
   ttsOnRef.current = ttsOn;
 
@@ -280,6 +283,8 @@ export default function ChatPage() {
             );
             // The model's follow-up answer streams into the same bubble; keep it on its own line.
             patchMessage(ai, (m) => ({ ...m, content: m.content + "\n\n" }));
+          } else if (event === "undo_available") {
+            patchMessage(ai, (m) => ({ ...m, undo: { ...data, at: Date.now() } }));
           } else if (event === "workflow_step_requires_approval") {
             setWorkflow((w) =>
               w.map((s) => (s.step === data.step_index ? { ...s, k: "wait", detail: "Waiting for your approval" } : s))
@@ -299,6 +304,7 @@ export default function ChatPage() {
       }
     } finally {
       setBusy(false);
+      setTurn((t) => t + 1);
       abortRef.current = null;
       api.listSessions(token).then((r) => setSessions(r.sessions || [])).catch(() => {});
     }
@@ -306,19 +312,8 @@ export default function ChatPage() {
     if (ttsOnRef.current && finalText.trim()) playTts(finalText);
   }
 
-  async function playTts(text) {
-    try {
-      const blob = await api.speak(token, text.slice(0, 4000));
-      const url = URL.createObjectURL(blob);
-      if (audioRef.current) {
-        audioRef.current.pause();
-        URL.revokeObjectURL(audioRef.current.src);
-      }
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.play().catch(() => {});
-    } catch { /* voice provider unavailable — ignore */ }
-  }
+  // Cloud voice when configured, otherwise Windows' built-in voices (works offline).
+  const playTts = (text) => speakText(token, text, { maxChars: 4000 });
 
   async function toggleRecording() {
     if (recording) {
@@ -553,6 +548,7 @@ export default function ChatPage() {
                           Sorry, I couldn't finish that one. Could you rephrase it?
                         </span>
                       )}
+                      {m.undo && <UndoChip token={token} undo={m.undo} />}
                     </div>
                   </div>
                 ))}
@@ -564,6 +560,7 @@ export default function ChatPage() {
         {/* Composer */}
         <div className="px-6 pb-6 pt-2">
           <div className="mx-auto w-full max-w-3xl">
+            <MemorySuggestionBar token={token} turn={turn} />
             <div className="flex items-end gap-2 rounded-[26px] border border-ink/12 bg-white/90 p-2 pl-5 shadow-lift backdrop-blur-sm transition focus-within:border-clay/50 focus-within:ring-4 focus-within:ring-clay/12">
               <textarea
                 ref={taRef}

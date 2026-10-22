@@ -4,6 +4,27 @@ Every release of the JOI desktop app, newest first. The website shows the same n
 https://joi-landing-one.vercel.app/changelog (from `Joi-Landing/src/content/releases.ts`).
 Keep both in sync; `docs/RELEASING.md` has the steps.
 
+## 1.3.0 — 22 October 2026
+**Say "Hey JOI", in English or Hindi, and take anything back**
+
+### New
+- "Hey JOI": say it and the assistant pops up, listens and answers out loud. It's off until
+  you turn it on (Settings → Voice) and the wake word is recognised on your computer.
+- Voice works offline: speech is transcribed on your computer, with no account or internet
+  needed after a one-time download.
+- Hindi and Hinglish: ask in Hindi or mix it with English ("aaj mera schedule kya hai") and
+  JOI answers the same way.
+- JOI learns about you: when you mention something worth remembering (your sister's name,
+  where you work), JOI asks "Remember this?" and only saves it if you say yes.
+- Routines that react: run a routine when an email arrives from someone, before each meeting,
+  or when your battery gets low. Not only on a schedule.
+- Undo: emails JOI sends wait 30 seconds so you can cancel them, deleted calendar events can
+  be restored for 5 minutes, and overwritten files can be put back for 10 minutes.
+
+### Improved
+- Spoken answers fall back to your computer's own voices when no voice service is set up,
+  and pick a Hindi voice for Hindi text.
+
 ## 1.2.1 — 22 October 2026
 **JOI's own icon everywhere**
 

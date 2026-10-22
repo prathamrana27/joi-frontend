@@ -9,6 +9,7 @@ const TABS = [
   { k: "memory", label: "Assistant Memory" },
   { k: "permissions", label: "Permissions" },
   { k: "automations", label: "Automations" },
+  { k: "voice", label: "Voice" },
   { k: "knowledge", label: "Knowledge" },
   { k: "audit", label: "Activity Log" },
 ];
@@ -262,13 +263,25 @@ function MemoryPanel({ token }) {
   const [notes, setNotes] = useState("");
   const [note, setNote] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
 
   useEffect(() => {
     api.getMemory(token).then((r) => {
       setPrefs(r.memory?.preferences || "");
       setNotes(r.memory?.notes || "");
     }).catch(() => {});
+    api.memorySuggestions(token).then((r) => setSuggestions(r.suggestions || [])).catch(() => {});
   }, [token]);
+
+  async function decideSuggestion(s, decision) {
+    try {
+      const r = await api.decideMemorySuggestion(token, s.suggestion_id, decision);
+      if (decision === "accept") setNotes(r.memory?.notes || notes);
+      setSuggestions((list) => list.filter((x) => x.suggestion_id !== s.suggestion_id));
+    } catch (e) {
+      setNote({ t: e.message, tone: "err" });
+    }
+  }
 
   async function save() {
     setBusy(true);
@@ -289,6 +302,23 @@ function MemoryPanel({ token }) {
 
   return (
     <div className="space-y-5">
+      {suggestions.length > 0 && (
+        <div className="rounded-2xl border border-clay/30 bg-clay-50/70 p-4">
+          <div className="text-sm font-semibold text-ink">Suggested by JOI</div>
+          <div className="mt-0.5 text-xs text-ink-muted">
+            Things you mentioned in chats. JOI only remembers the ones you accept.
+          </div>
+          <ul className="mt-3 space-y-2">
+            {suggestions.map((s) => (
+              <li key={s.suggestion_id} className="flex items-center gap-2 rounded-xl bg-white/80 px-3 py-2 text-sm">
+                <span className="min-w-0 flex-1 text-ink">{s.text}</span>
+                <Button onClick={() => decideSuggestion(s, "accept")} className="px-3 py-1 text-xs">Remember</Button>
+                <Button variant="ghost" onClick={() => decideSuggestion(s, "dismiss")} className="px-3 py-1 text-xs">Dismiss</Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <Field label="Assistant preferences">
         <TextArea rows={4} value={prefs} onChange={(e) => setPrefs(e.target.value)}
           placeholder='How should JOI behave? e.g. "be concise", "use Python for math"'
@@ -439,12 +469,32 @@ function BriefingCard({ token }) {
   );
 }
 
+// Routine triggers (backend: routine_triggers.py).
+const TRIGGER_HINTS = {
+  schedule: { prompt: "What should JOI do? e.g. Summarise my unread email", default: "" },
+  email: { prompt: "What should JOI do? e.g. Summarise the email and tell me if it's urgent", placeholder: "boss@company.com or a name", default: "" },
+  meeting: { prompt: "What should JOI do? e.g. Remind me and list the attendees", placeholder: "15", unit: "minutes before", default: "15" },
+  battery: { prompt: "What should JOI do? e.g. Lower the brightness and tell me", placeholder: "20", unit: "% or lower", default: "20" },
+};
+
+function describeTrigger(r) {
+  const t = r.trigger?.type || "schedule";
+  const v = r.trigger?.value;
+  if (t === "email") return `when an email from ${v} arrives`;
+  if (t === "meeting") return `${v} min before each meeting`;
+  if (t === "battery") return `when battery drops to ${v}%`;
+  return `every ${r.interval_minutes}m`;
+}
+
 function AutomationsPanel({ token }) {
   const [routines, setRoutines] = useState([]);
   const [reminders, setReminders] = useState([]);
   const [rName, setRName] = useState("");
   const [rPrompt, setRPrompt] = useState("");
   const [rInterval, setRInterval] = useState(1440);
+  const [rTrigger, setRTrigger] = useState("schedule");
+  const [rValue, setRValue] = useState("");
+  const [rError, setRError] = useState("");
   const [remTitle, setRemTitle] = useState("");
   const [remDue, setRemDue] = useState("");
 
@@ -456,8 +506,20 @@ function AutomationsPanel({ token }) {
 
   async function addRoutine() {
     if (!rName.trim() || rPrompt.trim().length < 3) return;
-    await api.createRoutine(token, { name: rName, prompt: rPrompt, interval_minutes: Number(rInterval), enabled: true }).catch(() => {});
-    setRName(""); setRPrompt(""); load();
+    setRError("");
+    try {
+      await api.createRoutine(token, {
+        name: rName,
+        prompt: rPrompt,
+        interval_minutes: Number(rInterval),
+        enabled: true,
+        trigger_type: rTrigger,
+        trigger_value: rTrigger === "schedule" ? "" : String(rValue).trim(),
+      });
+      setRName(""); setRPrompt(""); setRValue(""); load();
+    } catch (e) {
+      setRError(e.message);
+    }
   }
   async function addReminder() {
     if (!remTitle.trim() || !remDue) return;
@@ -472,20 +534,47 @@ function AutomationsPanel({ token }) {
         <div className="mb-3 font-display text-base font-semibold text-ink">Routines</div>
         <div className="card space-y-2 p-4">
           <Input value={rName} onChange={(e) => setRName(e.target.value)} placeholder="Routine name" />
-          <TextArea rows={2} value={rPrompt} onChange={(e) => setRPrompt(e.target.value)} placeholder="Prompt to run on a schedule"
+          <TextArea rows={2} value={rPrompt} onChange={(e) => setRPrompt(e.target.value)}
+            placeholder={TRIGGER_HINTS[rTrigger].prompt}
             className="rounded-2xl border border-ink/12 bg-cream-100/70 px-4 py-2.5" />
-          <div className="flex items-center gap-2">
-            <Input type="number" min="5" value={rInterval} onChange={(e) => setRInterval(e.target.value)} className="w-28" />
-            <span className="text-sm text-ink-muted">minutes</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-ink-muted">When</span>
+            <select
+              value={rTrigger}
+              onChange={(e) => { setRTrigger(e.target.value); setRValue(TRIGGER_HINTS[e.target.value].default); }}
+              className="rounded-xl border border-ink/12 bg-cream-100/70 px-3 py-2 text-sm text-ink outline-none focus:border-clay/60"
+            >
+              <option value="schedule">On a schedule</option>
+              <option value="email">An email arrives from…</option>
+              <option value="meeting">Before each meeting</option>
+              <option value="battery">Battery gets low</option>
+            </select>
+            {rTrigger === "schedule" ? (
+              <>
+                <Input type="number" min="5" value={rInterval} onChange={(e) => setRInterval(e.target.value)} className="w-24" />
+                <span className="text-sm text-ink-muted">minutes</span>
+              </>
+            ) : (
+              <>
+                <Input
+                  value={rValue}
+                  onChange={(e) => setRValue(e.target.value)}
+                  placeholder={TRIGGER_HINTS[rTrigger].placeholder}
+                  className={rTrigger === "email" ? "min-w-[180px] flex-1" : "w-24"}
+                />
+                {TRIGGER_HINTS[rTrigger].unit && <span className="text-sm text-ink-muted">{TRIGGER_HINTS[rTrigger].unit}</span>}
+              </>
+            )}
             <Button onClick={addRoutine} className="ml-auto px-4 py-2">Create</Button>
           </div>
+          {rError && <Note tone="err">{rError}</Note>}
         </div>
         <div className="mt-3 space-y-2">
           {routines.map((r) => (
             <div key={r.id} className="card flex items-center justify-between p-3">
               <div className="min-w-0">
                 <div className="text-sm font-medium text-ink">{r.name}</div>
-                <div className="text-xs text-ink-muted">every {r.interval_minutes}m · {r.enabled ? "enabled" : "disabled"}</div>
+                <div className="text-xs text-ink-muted">{describeTrigger(r)} · {r.enabled ? "enabled" : "disabled"}</div>
               </div>
               <div className="flex shrink-0 gap-2">
                 <Button variant="ghost" onClick={() => api.runRoutine(token, r.id).catch(() => {})}>Run</Button>
@@ -522,6 +611,79 @@ function AutomationsPanel({ token }) {
               </button>
             </div>
           ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+const WAKE_STATUS = {
+  off: "Off",
+  loading: "Getting ready… (the first time downloads a small 40 MB voice model)",
+  listening: "Listening for “Hey JOI”",
+  error: "Couldn't start",
+};
+
+function VoicePanel({ token }) {
+  const [wake, setWake] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.getWakeWord(token).then(setWake).catch(() => {});
+  }, [token]);
+
+  // While the model loads, check back until it's listening (or fails).
+  useEffect(() => {
+    if (wake?.status !== "loading") return undefined;
+    const id = setTimeout(() => api.getWakeWord(token).then(setWake).catch(() => {}), 1500);
+    return () => clearTimeout(id);
+  }, [wake, token]);
+
+  async function toggle(enabled) {
+    setBusy(true);
+    try {
+      setWake(await api.setWakeWord(token, enabled));
+    } catch (e) {
+      setWake((w) => ({ ...(w || {}), status: "error", error: e.message }));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const status = wake?.enabled ? wake.status : "off";
+  return (
+    <div className="space-y-6">
+      <section>
+        <div className="mb-3 font-display text-base font-semibold text-ink">“Hey JOI”</div>
+        <div className="card space-y-3 p-4">
+          <p className="text-sm text-ink-muted">
+            Say “Hey JOI” and the assistant pops up, listens to your request and answers out loud. No clicks or
+            shortcut needed.
+          </p>
+          <label className="flex items-center gap-2.5 text-sm font-medium text-ink">
+            <input type="checkbox" checked={!!wake?.enabled} disabled={busy || !wake} onChange={(e) => toggle(e.target.checked)} />
+            Listen for “Hey JOI”
+          </label>
+          <div className="flex items-center gap-2 text-sm text-ink-soft">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                status === "listening" ? "animate-pulse bg-sage" : status === "error" ? "bg-clay" : "bg-ink/25"
+              }`}
+            />
+            {WAKE_STATUS[status] || status}
+          </div>
+          {status === "error" && wake?.error && <Note tone="err">{wake.error}</Note>}
+          <p className="text-xs text-ink-faint">
+            Private by design: the wake word is recognised on this computer. Nothing is recorded or sent anywhere
+            until you say “Hey JOI”, and only while JOI is running.
+          </p>
+        </div>
+      </section>
+      <section>
+        <div className="mb-3 font-display text-base font-semibold text-ink">Speaking to JOI</div>
+        <div className="card p-4 text-sm text-ink-muted">
+          Voice input is transcribed on your computer. It works offline and understands English, Hindi and
+          Hinglish. The first time you use the mic, JOI downloads its speech model (about 145 MB).
         </div>
       </section>
     </div>
@@ -640,6 +802,7 @@ export default function Settings({ open, onClose, token, user, onSignOut }) {
             {tab === "memory" && <MemoryPanel token={token} />}
             {tab === "permissions" && <PermissionsPanel token={token} />}
             {tab === "automations" && <AutomationsPanel token={token} />}
+            {tab === "voice" && <VoicePanel token={token} />}
             {tab === "knowledge" && <KnowledgePanel token={token} />}
             {tab === "audit" && <AuditPanel token={token} />}
           </div>

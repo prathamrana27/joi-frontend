@@ -14,7 +14,7 @@ contextBridge.exposeInMainWorld("joiDesktop", {
     if (typeof handler !== "function") {
       return () => {};
     }
-    const listener = () => handler();
+    const listener = (_event, info) => handler(info || {});
     ipcRenderer.on("quick-shown", listener);
     return () => {
       ipcRenderer.removeListener("quick-shown", listener);
