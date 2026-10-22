@@ -4,6 +4,14 @@ Every release of the JOI desktop app, newest first. The website shows the same n
 https://joi-landing-one.vercel.app/changelog (from `Joi-Landing/src/content/releases.ts`).
 Keep both in sync; `docs/RELEASING.md` has the steps.
 
+## 1.3.1 — 22 October 2026
+**Google sign-in and Google connections work in the installed app**
+
+### Fixed
+- "Continue with Google" was missing from the sign-in page, and Gmail, Calendar and the other
+  Google services couldn't be connected, in installed copies of JOI.
+- The sign-in page now waits for JOI to finish starting before deciding which options to show.
+
 ## 1.3.0 — 22 October 2026
 **Say "Hey JOI", in English or Hindi, and take anything back**
 

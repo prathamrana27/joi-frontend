@@ -424,6 +424,8 @@ function getBackendLogTail(maxLines = 5) {
   return backendRecentLogs.slice(-Math.max(1, maxLines)).join("\n");
 }
 
+const SHIPPED_ENV_KEYS = ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_ALLOWED_CLIENT_IDS"];
+
 function preparePackagedBackendRuntime(packagedBackendDir) {
   const backendDataDir = path.join(app.getPath("userData"), "backend");
   const backendToolsDataDir = path.join(backendDataDir, "tools");
@@ -443,6 +445,14 @@ function preparePackagedBackendRuntime(packagedBackendDir) {
   // Fallback: create editable .env from template if no concrete env exists.
   tryCopyFileIfMissing(packagedEnvExample, userEnvPath);
   tryCopyFileIfMissing(packagedEnvExample, userEnvExample);
+
+  // Settings that ship with JOI (its Google sign-in client) reach existing installs on
+  // update: fill them in where the user's file is blank, never overwrite a value.
+  for (const key of SHIPPED_ENV_KEYS) {
+    const shipped = String(parseEnvFileValue(packagedEnvExample, key) || "").trim();
+    const current = String(parseEnvFileValue(userEnvPath, key) || "").trim();
+    if (shipped && !current) upsertEnvValue(userEnvPath, key, shipped);
+  }
 
   // If runtime .env is still a template, replace it with packaged runtime env when available.
   if (

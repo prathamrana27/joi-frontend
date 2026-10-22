@@ -59,8 +59,16 @@ export default function AuthPage() {
     let cancelled = false;
     (async () => {
       try {
-        const cfg = await api.authConfig();
-        if (cancelled || !cfg.google_enabled || !cfg.google_client_id) return;
+        // The backend may still be starting when this page first shows: keep asking.
+        let cfg = null;
+        for (let attempt = 0; !cfg && attempt < 20 && !cancelled; attempt += 1) {
+          try {
+            cfg = await api.authConfig();
+          } catch {
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        }
+        if (cancelled || !cfg?.google_enabled || !cfg.google_client_id) return;
         setGoogleCfg(cfg);
         if (isElectron) return; // desktop app uses the IPC OAuth flow (button below)
         await loadGsiScript();
