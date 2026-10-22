@@ -106,7 +106,7 @@ function ConnectorRow({ token, provider, name, desc }) {
         </div>
         <div className="truncate text-sm text-ink-muted">{connected && detail ? detail : desc}</div>
         {status && !configured && (
-          <div className="mt-1 text-xs text-clay-700">Not configured on the server yet.</div>
+          <div className="mt-1 text-xs text-ink-faint">Coming soon to this version of JOI.</div>
         )}
       </div>
       {connected ? (

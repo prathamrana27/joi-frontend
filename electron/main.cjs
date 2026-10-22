@@ -424,7 +424,10 @@ function getBackendLogTail(maxLines = 5) {
   return backendRecentLogs.slice(-Math.max(1, maxLines)).join("\n");
 }
 
-const SHIPPED_ENV_KEYS = ["GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_ALLOWED_CLIENT_IDS"];
+const SHIPPED_ENV_KEYS = [
+  "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_OAUTH_ALLOWED_CLIENT_IDS",
+  "SLACK_CLIENT_ID", "SLACK_REDIRECT_URI", "SLACK_EXCHANGE_URL",
+];
 
 function preparePackagedBackendRuntime(packagedBackendDir) {
   const backendDataDir = path.join(app.getPath("userData"), "backend");
